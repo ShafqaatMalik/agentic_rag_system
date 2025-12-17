@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "description": "Sample evaluation dataset for Agentic RAG system",
+  "test_cases": [
+    {
+      "id": "tc_001",
+      "question": "How is AI being used in healthcare?",
+      "ground_truth": "AI is being used in healthcare for faster diagnosis, personalized treatment plans, and analyzing medical images to detect diseases like cancer.",
+      "expected_contexts": [
+        "Artificial intelligence is transforming healthcare by enabling faster diagnosis and personalized treatment plans.",
+        "Machine learning models can analyze medical images to detect diseases like cancer with high accuracy."
+      ]
+    },
+    {
+      "id": "tc_002",
+      "question": "What was the company's quarterly revenue?",
+      "ground_truth": "The company reported quarterly revenue of $50 million, representing a 25% increase year-over-year.",
+      "expected_contexts": [
+        "The company reported quarterly revenue of $50 million, representing a 25% increase year-over-year."
+      ]
+    },
+    {
+      "id": "tc_003",
+      "question": "What are the effects of climate change?",
+      "ground_truth": "Climate change is causing rising sea levels and more frequent extreme weather events globally.",
+      "expected_contexts": [
+        "Climate change is causing rising sea levels and more frequent extreme weather events globally."
+      ]
+    },
+    {
+      "id": "tc_004",
+      "question": "How can machine learning detect cancer?",
+      "ground_truth": "Machine learning models can analyze medical images to detect diseases like cancer with high accuracy.",
+      "expected_contexts": [
+        "Machine learning models can analyze medical images to detect diseases like cancer with high accuracy."
+      ]
+    },
+    {
+      "id": "tc_005",
+      "question": "What is the revenue growth percentage?",
+      "ground_truth": "The revenue growth was 25% year-over-year.",
+      "expected_contexts": [
+        "The company reported quarterly revenue of $50 million, representing a 25% increase year-over-year."
+      ]
+    }
+  ]
+}

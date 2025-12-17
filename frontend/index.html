@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic RAG | AI-Powered Document Assistant</title>
+    <meta name="description"
+        content="A self-correcting RAG system with intelligent query routing and hallucination detection">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/frontend/styles.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                        <path d="M2 17l10 5 10-5" />
+                        <path d="M2 12l10 5 10-5" />
+                    </svg>
+                </div>
+                <span class="logo-text">Agentic RAG</span>
+            </div>
+
+            <!-- Health Status -->
+            <div class="status-card">
+                <div class="status-header">
+                    <span class="status-indicator" id="health-indicator"></span>
+                    <span class="status-label">System Status</span>
+                </div>
+                <div class="status-details" id="health-details">
+                    <p>Connecting...</p>
+                </div>
+            </div>
+
+            <!-- Collection Stats -->
+            <div class="stats-card">
+                <h3>Document Collection</h3>
+                <div class="stat-item">
+                    <span class="stat-value" id="doc-count">0</span>
+                    <span class="stat-label">Documents</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="collection-name">-</span>
+                    <span class="stat-label">Collection</span>
+                </div>
+            </div>
+
+            <!-- Conversations List -->
+            <div class="conversations-section">
+                <div class="conversations-header">
+                    <h3>Chat History</h3>
+                    <button class="btn btn-icon" id="new-chat-btn" title="New Chat">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="conversations-list" id="conversations-list">
+                    <div class="conversations-empty">
+                        <p>No conversations yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Documents List -->
+            <div class="documents-list-section">
+                <h3>Your Documents</h3>
+                <div class="documents-list" id="documents-list">
+                    <div class="documents-empty">
+                        <p>No documents uploaded yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Upload -->
+            <div class="upload-section">
+                <h3>Upload Documents</h3>
+                <div class="upload-zone" id="upload-zone">
+                    <input type="file" id="file-input" accept=".pdf,.txt,.md" hidden>
+                    <div class="upload-content">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        <p>Drag & drop or <span class="upload-link">browse</span></p>
+                        <p class="upload-hint">PDF, TXT, MD supported</p>
+                    </div>
+                </div>
+                <div class="upload-progress" id="upload-progress" hidden>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <p class="progress-text" id="progress-text">Uploading...</p>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="actions">
+                <button class="btn btn-secondary" id="clear-chat-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                    </svg>
+                    Delete Conversation
+                </button>
+            </div>
+
+            <div class="sidebar-footer">
+                <p>v<span id="version">0.1.0</span></p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="chat-container">
+                <!-- Chat Messages -->
+                <div class="chat-messages" id="chat-messages">
+                    <div class="welcome-message">
+                        <div class="welcome-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <circle cx="12" cy="12" r="10" />
+                                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                                <line x1="9" y1="9" x2="9.01" y2="9" />
+                                <line x1="15" y1="9" x2="15.01" y2="9" />
+                            </svg>
+                        </div>
+                        <h2>Welcome to Agentic RAG</h2>
+                        <p>I'm your AI-powered document assistant with self-correction capabilities.</p>
+                        <div class="feature-tags">
+                            <span class="tag">Intelligent Routing</span>
+                            <span class="tag">Self-Correcting</span>
+                            <span class="tag">Hallucination Detection</span>
+                        </div>
+                        <p class="hint">Upload documents and start asking questions!</p>
+                    </div>
+                </div>
+
+                <!-- Chat Input -->
+                <div class="chat-input-container">
+                    <form class="chat-form" id="chat-form">
+                        <div class="input-wrapper">
+                            <textarea id="query-input" placeholder="Ask a question about your documents..." rows="1"
+                                maxlength="2000"></textarea>
+                            <button type="submit" class="send-btn" id="send-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13" />
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                                </svg>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/frontend/app.js"></script>
+</body>
+
+</html>

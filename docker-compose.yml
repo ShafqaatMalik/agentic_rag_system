@@ -1,0 +1,31 @@
+services:
+  agentic-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-rag
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+      - COLLECTION_NAME=${COLLECTION_NAME:-documents}
+      - RETRIEVAL_K=${RETRIEVAL_K:-4}
+      - MAX_REWRITE_ITERATIONS=${MAX_REWRITE_ITERATIONS:-3}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - chroma_data:/app/chroma_db
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  chroma_data:
+    driver: local
