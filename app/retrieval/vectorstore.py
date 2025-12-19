@@ -2,17 +2,14 @@
 Vector store setup and retrieval operations using ChromaDB.
 """
 
-import os
-from typing import List, Optional
 from pathlib import Path
 
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_core.documents import Document
+import structlog
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-
-import structlog
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from app.config import get_settings
 
@@ -21,28 +18,27 @@ logger = structlog.get_logger()
 
 class VectorStoreManager:
     """Manages ChromaDB vector store operations."""
-    
+
     def __init__(self):
         self.settings = get_settings()
-        self._embeddings: Optional[GoogleGenerativeAIEmbeddings] = None
-        self._vectorstore: Optional[Chroma] = None
+        self._embeddings: GoogleGenerativeAIEmbeddings | None = None
+        self._vectorstore: Chroma | None = None
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]
+            separators=["\n\n", "\n", ". ", " ", ""],
         )
-    
+
     @property
     def embeddings(self) -> GoogleGenerativeAIEmbeddings:
         """Lazy initialization of embeddings."""
         if self._embeddings is None:
             self._embeddings = GoogleGenerativeAIEmbeddings(
-                model=self.settings.embedding_model,
-                google_api_key=self.settings.google_api_key
+                model=self.settings.embedding_model, google_api_key=self.settings.google_api_key
             )
         return self._embeddings
-    
+
     @property
     def vectorstore(self) -> Chroma:
         """Lazy initialization of vector store."""
@@ -50,34 +46,33 @@ class VectorStoreManager:
             self._vectorstore = Chroma(
                 collection_name=self.settings.collection_name,
                 embedding_function=self.embeddings,
-                persist_directory=self.settings.chroma_persist_directory
+                persist_directory=self.settings.chroma_persist_directory,
             )
         return self._vectorstore
-    
-    def get_retriever(self, k: Optional[int] = None):
+
+    def get_retriever(self, k: int | None = None):
         """Get a retriever instance."""
         return self.vectorstore.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": k or self.settings.retrieval_k}
+            search_type="similarity", search_kwargs={"k": k or self.settings.retrieval_k}
         )
-    
-    async def add_documents(self, documents: List[Document]) -> List[str]:
+
+    async def add_documents(self, documents: list[Document]) -> list[str]:
         """Add documents to the vector store."""
         if not documents:
             logger.warning("No documents to add")
             return []
-        
+
         # Split documents into chunks
         chunks = self._text_splitter.split_documents(documents)
         logger.info(f"Split {len(documents)} documents into {len(chunks)} chunks")
-        
+
         # Add to vector store
         ids = self.vectorstore.add_documents(chunks)
         logger.info(f"Added {len(ids)} chunks to vector store")
-        
+
         return ids
-    
-    async def ingest_file(self, file_path: str, original_filename: Optional[str] = None) -> List[str]:
+
+    async def ingest_file(self, file_path: str, original_filename: str | None = None) -> list[str]:
         """Ingest a single file into the vector store.
 
         Args:
@@ -111,17 +106,17 @@ class VectorStoreManager:
         logger.info(f"Loaded {len(documents)} pages from {source_name}")
 
         return await self.add_documents(documents)
-    
+
     async def ingest_directory(self, directory_path: str) -> dict:
         """Ingest all supported files from a directory."""
         path = Path(directory_path)
-        
+
         if not path.is_dir():
             raise NotADirectoryError(f"Not a directory: {directory_path}")
-        
+
         results = {"success": [], "failed": []}
         supported_extensions = {".pdf", ".txt", ".md"}
-        
+
         for file_path in path.iterdir():
             if file_path.suffix.lower() in supported_extensions:
                 try:
@@ -130,36 +125,26 @@ class VectorStoreManager:
                 except Exception as e:
                     logger.error(f"Failed to ingest {file_path.name}: {e}")
                     results["failed"].append({"file": file_path.name, "error": str(e)})
-        
+
         logger.info(
             f"Ingestion complete: {len(results['success'])} succeeded, "
             f"{len(results['failed'])} failed"
         )
-        
+
         return results
-    
-    async def similarity_search(
-        self, 
-        query: str, 
-        k: Optional[int] = None
-    ) -> List[Document]:
+
+    async def similarity_search(self, query: str, k: int | None = None) -> list[Document]:
         """Perform similarity search."""
-        return self.vectorstore.similarity_search(
-            query, 
-            k=k or self.settings.retrieval_k
-        )
-    
+        return self.vectorstore.similarity_search(query, k=k or self.settings.retrieval_k)
+
     async def similarity_search_with_score(
-        self, 
-        query: str, 
-        k: Optional[int] = None
-    ) -> List[tuple[Document, float]]:
+        self, query: str, k: int | None = None
+    ) -> list[tuple[Document, float]]:
         """Perform similarity search with relevance scores."""
         return self.vectorstore.similarity_search_with_score(
-            query, 
-            k=k or self.settings.retrieval_k
+            query, k=k or self.settings.retrieval_k
         )
-    
+
     def get_collection_stats(self) -> dict:
         """Get statistics about the vector store collection."""
         collection = self.vectorstore._collection
@@ -168,7 +153,7 @@ class VectorStoreManager:
             "count": collection.count(),
         }
 
-    def get_documents_list(self) -> List[dict]:
+    def get_documents_list(self) -> list[dict]:
         """Get list of unique documents in the collection."""
         try:
             collection = self.vectorstore._collection
@@ -186,7 +171,7 @@ class VectorStoreManager:
                     unique_docs[source] = {
                         "name": source,
                         "path": metadata.get("file_path", ""),
-                        "page_count": 1
+                        "page_count": 1,
                     }
                 else:
                     unique_docs[source]["page_count"] += 1
@@ -199,7 +184,7 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Error getting documents list: {e}")
             return []
-    
+
     def delete_document(self, document_name: str) -> int:
         """Delete all chunks of a specific document by its source name.
 
@@ -213,10 +198,7 @@ class VectorStoreManager:
             collection = self.vectorstore._collection
 
             # Get all IDs for this document
-            results = collection.get(
-                where={"source": document_name},
-                include=["metadatas"]
-            )
+            results = collection.get(where={"source": document_name}, include=["metadatas"])
 
             if not results or not results.get("ids"):
                 logger.warning(f"No chunks found for document: {document_name}")
@@ -240,7 +222,7 @@ class VectorStoreManager:
 
 
 # Singleton instance
-_vectorstore_manager: Optional[VectorStoreManager] = None
+_vectorstore_manager: VectorStoreManager | None = None
 
 
 def get_vectorstore_manager() -> VectorStoreManager:

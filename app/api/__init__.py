@@ -2,16 +2,16 @@
 
 from app.api.main import app
 from app.api.schemas import (
+    ClearCollectionResponse,
+    CollectionStats,
     HealthResponse,
+    IngestFileResponse,
     IngestRequest,
     IngestResponse,
-    IngestFileResponse,
     QueryRequest,
     QueryResponse,
     SourceDocument,
-    CollectionStats,
-    ClearCollectionResponse,
-    StreamEvent
+    StreamEvent,
 )
 
 __all__ = [
@@ -25,5 +25,5 @@ __all__ = [
     "SourceDocument",
     "CollectionStats",
     "ClearCollectionResponse",
-    "StreamEvent"
+    "StreamEvent",
 ]

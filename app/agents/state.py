@@ -2,10 +2,10 @@
 Agent state schema for LangGraph workflow.
 """
 
-from typing import List, Optional, Literal, Dict
-from typing_extensions import TypedDict
+from typing import Literal
 
 from langchain_core.documents import Document
+from typing_extensions import TypedDict
 
 
 class AgentState(TypedDict):
@@ -20,26 +20,26 @@ class AgentState(TypedDict):
     query: str
 
     # Retrieval
-    documents: List[Document]
+    documents: list[Document]
 
     # Processing flags
     documents_relevant: bool
 
     # Generation
-    generation: Optional[str]
+    generation: str | None
 
     # Control flow
     iteration_count: int
 
     # Routing
-    query_type: Optional[Literal["simple", "complex"]]
+    query_type: Literal["simple", "complex"] | None
 
     # Metadata
-    rewrite_history: List[str]
+    rewrite_history: list[str]
 
     # Timing
-    start_time: Optional[float]
-    timing: Dict[str, float]  # Maps node name to duration in seconds
+    start_time: float | None
+    timing: dict[str, float]  # Maps node name to duration in seconds
 
 
 def create_initial_state(query: str) -> AgentState:
@@ -63,5 +63,5 @@ def create_initial_state(query: str) -> AgentState:
         query_type=None,
         rewrite_history=[],
         start_time=time.time(),
-        timing={}
+        timing={},
     )

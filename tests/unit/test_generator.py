@@ -2,20 +2,20 @@
 Unit tests for Generator Chain.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 from langchain_core.documents import Document
 
 from app.chains.generator import (
+    GENERATOR_SYSTEM_PROMPT,
+    NO_CONTEXT_PROMPT,
     GenerationResult,
+    extract_sources,
+    format_documents,
     generate_answer,
     get_generator_chain,
     get_no_context_chain,
-    format_documents,
-    extract_sources,
-    GENERATOR_SYSTEM_PROMPT,
-    NO_CONTEXT_PROMPT
 )
 
 
@@ -25,9 +25,7 @@ class TestGenerationResult:
     def test_generation_result_with_answer(self):
         """Test creating a generation result with answer."""
         result = GenerationResult(
-            answer="AI is used for diagnosis.",
-            sources=["doc1.pdf"],
-            has_answer=True
+            answer="AI is used for diagnosis.", sources=["doc1.pdf"], has_answer=True
         )
         assert result.has_answer is True
         assert len(result.sources) == 1
@@ -35,9 +33,7 @@ class TestGenerationResult:
     def test_generation_result_no_answer(self):
         """Test creating a generation result without answer."""
         result = GenerationResult(
-            answer="No relevant information found.",
-            sources=[],
-            has_answer=False
+            answer="No relevant information found.", sources=[], has_answer=False
         )
         assert result.has_answer is False
         assert len(result.sources) == 0
@@ -102,8 +98,13 @@ class TestGeneratorChain:
     @pytest.mark.unit
     def test_no_context_prompt_content(self):
         """Test that no-context prompt contains key instructions."""
-        assert "no relevant" in NO_CONTEXT_PROMPT.lower() or "don't have" in NO_CONTEXT_PROMPT.lower()
-        assert "knowledge base" in NO_CONTEXT_PROMPT.lower() or "information" in NO_CONTEXT_PROMPT.lower()
+        assert (
+            "no relevant" in NO_CONTEXT_PROMPT.lower() or "don't have" in NO_CONTEXT_PROMPT.lower()
+        )
+        assert (
+            "knowledge base" in NO_CONTEXT_PROMPT.lower()
+            or "information" in NO_CONTEXT_PROMPT.lower()
+        )
 
     @pytest.mark.unit
     @patch("app.chains.generator.get_llm")
@@ -140,7 +141,7 @@ class TestGeneratorChain:
         docs = [
             Document(
                 page_content="AI improves healthcare diagnostics",
-                metadata={"source": "healthcare.pdf"}
+                metadata={"source": "healthcare.pdf"},
             )
         ]
 

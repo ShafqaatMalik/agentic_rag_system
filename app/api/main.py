@@ -6,41 +6,34 @@ and system management.
 """
 
 import json
-from typing import List
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from sse_starlette.sse import EventSourceResponse
 from pathlib import Path
 
+import structlog
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from sse_starlette.sse import EventSourceResponse
+
 from app import __version__
-from app.config import get_settings
-from app.logging_config import setup_logging
+from app.agents.graph import get_graph_visualization, run_rag_pipeline
 from app.api.schemas import (
+    ClearCollectionResponse,
+    CollectionStats,
+    DeleteDocumentResponse,
+    DocumentsListResponse,
     HealthResponse,
+    IngestFileResponse,
     IngestRequest,
     IngestResponse,
-    IngestFileResponse,
     QueryRequest,
     QueryResponse,
     SourceDocument,
-    CollectionStats,
-    DocumentsListResponse,
-    ClearCollectionResponse,
-    DeleteDocumentResponse
 )
+from app.config import get_settings
+from app.logging_config import setup_logging
 from app.retrieval.vectorstore import get_vectorstore_manager
-from app.agents.graph import (
-    run_rag_pipeline,
-    run_rag_pipeline_sync,
-    run_rag_pipeline_stream,
-    get_graph_visualization
-)
-
-import structlog
 
 logger = structlog.get_logger()
 
@@ -51,7 +44,7 @@ async def lifespan(app: FastAPI):
     # Startup
     setup_logging()
     logger.info("Starting Agentic RAG API", version=__version__)
-    
+
     # Initialize vectorstore
     try:
         vectorstore = get_vectorstore_manager()
@@ -59,9 +52,9 @@ async def lifespan(app: FastAPI):
         logger.info("Vectorstore initialized", **stats)
     except Exception as e:
         logger.error("Failed to initialize vectorstore", error=str(e))
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Agentic RAG API")
 
@@ -71,7 +64,7 @@ app = FastAPI(
     title="Agentic RAG API",
     description="A lightweight, production-ready Retrieval-Augmented Generation system with self-correction capabilities.",
     version=__version__,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -91,6 +84,7 @@ if FRONTEND_DIR.exists():
 
 # --- Root Endpoint ---
 
+
 @app.get("/", include_in_schema=False)
 async def root():
     """Serve the frontend."""
@@ -102,6 +96,7 @@ async def root():
 
 # --- Health Endpoints ---
 
+
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
     """
@@ -110,44 +105,43 @@ async def health_check():
     try:
         vectorstore = get_vectorstore_manager()
         stats = vectorstore.get_collection_stats()
-        
+
         return HealthResponse(
             status="healthy",
             version=__version__,
             vectorstore_status="connected",
-            document_count=stats["count"]
+            document_count=stats["count"],
         )
     except Exception as e:
         logger.error("Health check failed", error=str(e))
         return HealthResponse(
-            status="unhealthy",
-            version=__version__,
-            vectorstore_status=f"error: {str(e)}"
+            status="unhealthy", version=__version__, vectorstore_status=f"error: {str(e)}"
         )
 
 
 # --- Ingest Endpoints ---
 
+
 @app.post("/ingest/file", response_model=IngestFileResponse, tags=["Ingest"])
 async def ingest_file(file: UploadFile = File(...)):
     """
     Ingest a single document file.
-    
+
     Supported formats: PDF, TXT, MD
     """
-    import tempfile
     import os
-    
+    import tempfile
+
     # Validate file type
     allowed_extensions = {".pdf", ".txt", ".md"}
     file_ext = os.path.splitext(file.filename)[1].lower()
-    
+
     if file_ext not in allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {file_ext}. Allowed: {allowed_extensions}"
+            detail=f"Unsupported file type: {file_ext}. Allowed: {allowed_extensions}",
         )
-    
+
     try:
         # Save to temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
@@ -164,19 +158,12 @@ async def ingest_file(file: UploadFile = File(...)):
 
         logger.info("File ingested", filename=file.filename, chunks=len(ids))
 
-        return IngestFileResponse(
-            filename=file.filename,
-            chunks_added=len(ids),
-            status="success"
-        )
-    
+        return IngestFileResponse(filename=file.filename, chunks_added=len(ids), status="success")
+
     except Exception as e:
         logger.error("File ingestion failed", filename=file.filename, error=str(e))
         return IngestFileResponse(
-            filename=file.filename,
-            chunks_added=0,
-            status="failed",
-            error=str(e)
+            filename=file.filename, chunks_added=0, status="failed", error=str(e)
         )
 
 
@@ -187,26 +174,27 @@ async def ingest_directory(request: IngestRequest):
     """
     if not request.directory_path:
         raise HTTPException(status_code=400, detail="directory_path is required")
-    
+
     try:
         vectorstore = get_vectorstore_manager()
         results = await vectorstore.ingest_directory(request.directory_path)
-        
+
         return IngestResponse(
             success=results["success"],
             failed=results["failed"],
             total_files=len(results["success"]) + len(results["failed"]),
-            message=f"Ingested {len(results['success'])} files successfully"
+            message=f"Ingested {len(results['success'])} files successfully",
         )
-    
+
     except NotADirectoryError:
-        raise HTTPException(status_code=400, detail="Path is not a directory")
+        raise HTTPException(status_code=400, detail="Path is not a directory") from None
     except Exception as e:
         logger.error("Directory ingestion failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # --- Query Endpoints ---
+
 
 @app.post("/query", response_model=QueryResponse, tags=["Query"])
 async def query(request: QueryRequest):
@@ -221,6 +209,7 @@ async def query(request: QueryRequest):
     5. Check for hallucinations
     """
     import time
+
     logger.info("Query received", query=request.query[:50])
 
     try:
@@ -243,11 +232,13 @@ async def query(request: QueryRequest):
         sources = []
         if request.include_sources and final_state.get("documents"):
             for doc in final_state["documents"]:
-                sources.append(SourceDocument(
-                    content=doc.page_content[:500],  # Truncate for response
-                    source=doc.metadata.get("source", "Unknown"),
-                    page=doc.metadata.get("page")
-                ))
+                sources.append(
+                    SourceDocument(
+                        content=doc.page_content[:500],  # Truncate for response
+                        source=doc.metadata.get("source", "Unknown"),
+                        page=doc.metadata.get("page"),
+                    )
+                )
 
         # Determine status
         status = "success"
@@ -261,19 +252,19 @@ async def query(request: QueryRequest):
             iterations=final_state.get("iteration_count", 0),
             status=status,
             latency_ms=round(total_latency_ms, 2) if total_latency_ms else None,
-            latency_breakdown=latency_breakdown
+            latency_breakdown=latency_breakdown,
         )
 
     except Exception as e:
         logger.error("Query failed", query=request.query[:50], error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/query/stream", tags=["Query"])
 async def query_stream(request: QueryRequest):
     """
     Query the RAG system with streaming response.
-    
+
     Returns Server-Sent Events (SSE) with:
     - token: Generated answer tokens
     - source: Source documents used
@@ -281,11 +272,12 @@ async def query_stream(request: QueryRequest):
     - error: Error information
     """
     logger.info("Streaming query received", query=request.query[:50])
-    
+
     async def event_generator():
         import time
+
         from app.agents.graph import run_rag_pipeline_stream_tokens
-        
+
         try:
             final_state = None
             documents = []
@@ -295,17 +287,14 @@ async def query_stream(request: QueryRequest):
             async for update in run_rag_pipeline_stream_tokens(request.query):
                 update_type = update.get("type")
                 update_data = update.get("data")
-                
+
                 if update_type == "token":
                     # Stream individual tokens
                     full_answer += update_data
-                    yield {
-                        "event": "token",
-                        "data": json.dumps({"content": update_data})
-                    }
+                    yield {"event": "token", "data": json.dumps({"content": update_data})}
                 elif update_type == "state_update":
                     # Capture documents and state for later use
-                    for node_name, node_state in update_data.items():
+                    for _node_name, node_state in update_data.items():
                         if isinstance(node_state, dict) and node_state.get("documents"):
                             documents = node_state["documents"]
                     final_state = update_data
@@ -317,10 +306,12 @@ async def query_stream(request: QueryRequest):
                 for doc in documents:
                     yield {
                         "event": "source",
-                        "data": json.dumps({
-                            "content": doc.page_content[:200],
-                            "source": doc.metadata.get("source", "Unknown")
-                        })
+                        "data": json.dumps(
+                            {
+                                "content": doc.page_content[:200],
+                                "source": doc.metadata.get("source", "Unknown"),
+                            }
+                        ),
                     }
 
             # Send timing information
@@ -344,30 +335,24 @@ async def query_stream(request: QueryRequest):
 
                             yield {
                                 "event": "timing",
-                                "data": json.dumps({
-                                    "total_ms": total_latency_ms,
-                                    "breakdown": latency_breakdown
-                                })
+                                "data": json.dumps(
+                                    {"total_ms": total_latency_ms, "breakdown": latency_breakdown}
+                                ),
                             }
                             break
 
             # Send completion
-            yield {
-                "event": "done",
-                "data": json.dumps({"status": "complete"})
-            }
-            
+            yield {"event": "done", "data": json.dumps({"status": "complete"})}
+
         except Exception as e:
             logger.error("Streaming query failed", error=str(e))
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": str(e)})
-            }
-    
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
     return EventSourceResponse(event_generator())
 
 
 # --- Collection Management ---
+
 
 @app.get("/collection/stats", response_model=CollectionStats, tags=["Collection"])
 async def get_collection_stats():
@@ -378,13 +363,10 @@ async def get_collection_stats():
         vectorstore = get_vectorstore_manager()
         stats = vectorstore.get_collection_stats()
 
-        return CollectionStats(
-            name=stats["name"],
-            document_count=stats["count"]
-        )
+        return CollectionStats(name=stats["name"], document_count=stats["count"])
     except Exception as e:
         logger.error("Failed to get collection stats", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/collection/documents", response_model=DocumentsListResponse, tags=["Collection"])
@@ -401,16 +383,17 @@ async def get_documents_list():
         vectorstore = get_vectorstore_manager()
         documents = vectorstore.get_documents_list()
 
-        return DocumentsListResponse(
-            documents=documents,
-            total_count=len(documents)
-        )
+        return DocumentsListResponse(documents=documents, total_count=len(documents))
     except Exception as e:
         logger.error("Failed to get documents list", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.delete("/collection/document/{document_name}", response_model=DeleteDocumentResponse, tags=["Collection"])
+@app.delete(
+    "/collection/document/{document_name}",
+    response_model=DeleteDocumentResponse,
+    tags=["Collection"],
+)
 async def delete_document(document_name: str):
     """
     Delete a specific document from the collection.
@@ -426,22 +409,19 @@ async def delete_document(document_name: str):
                 status="failed",
                 document_name=document_name,
                 chunks_deleted=0,
-                message=f"Document '{document_name}' not found"
+                message=f"Document '{document_name}' not found",
             )
 
         return DeleteDocumentResponse(
             status="success",
             document_name=document_name,
             chunks_deleted=chunks_deleted,
-            message=f"Successfully deleted {chunks_deleted} chunks"
+            message=f"Successfully deleted {chunks_deleted} chunks",
         )
     except Exception as e:
         logger.error("Failed to delete document", document=document_name, error=str(e))
         return DeleteDocumentResponse(
-            status="failed",
-            document_name=document_name,
-            chunks_deleted=0,
-            message=str(e)
+            status="failed", document_name=document_name, chunks_deleted=0, message=str(e)
         )
 
 
@@ -456,19 +436,14 @@ async def clear_collection():
         vectorstore = get_vectorstore_manager()
         vectorstore.clear_collection()
 
-        return ClearCollectionResponse(
-            status="success",
-            message="Collection cleared successfully"
-        )
+        return ClearCollectionResponse(status="success", message="Collection cleared successfully")
     except Exception as e:
         logger.error("Failed to clear collection", error=str(e))
-        return ClearCollectionResponse(
-            status="failed",
-            message=str(e)
-        )
+        return ClearCollectionResponse(status="failed", message=str(e))
 
 
 # --- Debug Endpoints ---
+
 
 @app.get("/graph/visualization", tags=["Debug"])
 async def get_graph_viz():
@@ -482,10 +457,6 @@ async def get_graph_viz():
 
 if __name__ == "__main__":
     import uvicorn
+
     settings = get_settings()
-    uvicorn.run(
-        "app.api.main:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        reload=True
-    )
+    uvicorn.run("app.api.main:app", host=settings.api_host, port=settings.api_port, reload=True)

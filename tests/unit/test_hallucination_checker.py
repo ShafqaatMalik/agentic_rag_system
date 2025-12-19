@@ -2,20 +2,20 @@
 Unit tests for Hallucination Checker Chain.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 from langchain_core.documents import Document
 
 from app.chains.hallucination_checker import (
-    HallucinationCheck,
+    HALLUCINATION_SYSTEM_PROMPT,
+    RELEVANCE_SYSTEM_PROMPT,
     AnswerRelevanceCheck,
-    check_hallucination,
+    HallucinationCheck,
     check_answer_relevance,
+    check_hallucination,
     get_hallucination_chain,
     get_relevance_chain,
-    HALLUCINATION_SYSTEM_PROMPT,
-    RELEVANCE_SYSTEM_PROMPT
 )
 
 
@@ -24,20 +24,14 @@ class TestHallucinationCheck:
 
     def test_hallucination_check_grounded(self):
         """Test creating a grounded check."""
-        check = HallucinationCheck(
-            is_grounded="yes",
-            confidence="high",
-            issues="None"
-        )
+        check = HallucinationCheck(is_grounded="yes", confidence="high", issues="None")
         assert check.is_grounded == "yes"
         assert check.confidence == "high"
 
     def test_hallucination_check_not_grounded(self):
         """Test creating a not grounded check."""
         check = HallucinationCheck(
-            is_grounded="no",
-            confidence="high",
-            issues="Answer contains fabricated statistics"
+            is_grounded="no", confidence="high", issues="Answer contains fabricated statistics"
         )
         assert check.is_grounded == "no"
         assert "fabricated" in check.issues
@@ -45,20 +39,12 @@ class TestHallucinationCheck:
     def test_hallucination_check_invalid_grounded(self):
         """Test that invalid grounded values raise error."""
         with pytest.raises(ValueError):
-            HallucinationCheck(
-                is_grounded="maybe",
-                confidence="high",
-                issues="Uncertain"
-            )
+            HallucinationCheck(is_grounded="maybe", confidence="high", issues="Uncertain")
 
     def test_hallucination_check_invalid_confidence(self):
         """Test that invalid confidence values raise error."""
         with pytest.raises(ValueError):
-            HallucinationCheck(
-                is_grounded="yes",
-                confidence="very high",
-                issues="None"
-            )
+            HallucinationCheck(is_grounded="yes", confidence="very high", issues="None")
 
 
 class TestAnswerRelevanceCheck:
@@ -67,26 +53,19 @@ class TestAnswerRelevanceCheck:
     def test_answer_relevance_check_relevant(self):
         """Test creating a relevant check."""
         check = AnswerRelevanceCheck(
-            is_relevant="yes",
-            reasoning="Answer directly addresses the query"
+            is_relevant="yes", reasoning="Answer directly addresses the query"
         )
         assert check.is_relevant == "yes"
 
     def test_answer_relevance_check_not_relevant(self):
         """Test creating a not relevant check."""
-        check = AnswerRelevanceCheck(
-            is_relevant="no",
-            reasoning="Answer is off-topic"
-        )
+        check = AnswerRelevanceCheck(is_relevant="no", reasoning="Answer is off-topic")
         assert check.is_relevant == "no"
 
     def test_answer_relevance_check_invalid(self):
         """Test that invalid values raise error."""
         with pytest.raises(ValueError):
-            AnswerRelevanceCheck(
-                is_relevant="maybe",
-                reasoning="Uncertain"
-            )
+            AnswerRelevanceCheck(is_relevant="maybe", reasoning="Uncertain")
 
 
 class TestHallucinationCheckerChain:
@@ -135,16 +114,13 @@ class TestHallucinationCheckerChain:
         """Test checking a grounded answer."""
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = HallucinationCheck(
-            is_grounded="yes",
-            confidence="high",
-            issues="None"
+            is_grounded="yes", confidence="high", issues="None"
         )
         mock_get_chain.return_value = mock_chain
 
         docs = [
             Document(
-                page_content="Revenue was $50 million in Q3 2024",
-                metadata={"source": "report.pdf"}
+                page_content="Revenue was $50 million in Q3 2024", metadata={"source": "report.pdf"}
             )
         ]
         answer = "The revenue was $50 million in Q3 2024."
@@ -161,18 +137,11 @@ class TestHallucinationCheckerChain:
         """Test checking a hallucinated answer."""
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = HallucinationCheck(
-            is_grounded="no",
-            confidence="high",
-            issues="Answer contains fabricated revenue figure"
+            is_grounded="no", confidence="high", issues="Answer contains fabricated revenue figure"
         )
         mock_get_chain.return_value = mock_chain
 
-        docs = [
-            Document(
-                page_content="Revenue was $50 million",
-                metadata={"source": "report.pdf"}
-            )
-        ]
+        docs = [Document(page_content="Revenue was $50 million", metadata={"source": "report.pdf"})]
         answer = "Revenue was $100 million, a 50% increase."
 
         result = check_hallucination(answer, docs)
@@ -214,8 +183,7 @@ class TestHallucinationCheckerChain:
         """Test checking a relevant answer."""
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = AnswerRelevanceCheck(
-            is_relevant="yes",
-            reasoning="Answer directly addresses revenue question"
+            is_relevant="yes", reasoning="Answer directly addresses revenue question"
         )
         mock_get_chain.return_value = mock_chain
 
@@ -234,8 +202,7 @@ class TestHallucinationCheckerChain:
         """Test checking an irrelevant answer."""
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = AnswerRelevanceCheck(
-            is_relevant="no",
-            reasoning="Answer discusses weather instead of revenue"
+            is_relevant="no", reasoning="Answer discusses weather instead of revenue"
         )
         mock_get_chain.return_value = mock_chain
 

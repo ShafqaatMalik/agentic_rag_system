@@ -5,34 +5,32 @@ Grades each retrieved document as either relevant or not relevant
 to determine if re-retrieval is needed.
 """
 
-from typing import List, Literal
+from typing import Literal
 
-from langchain_core.prompts import ChatPromptTemplate
+import structlog
 from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from app.llm import get_llm_with_structured_output
 from app.errors import chain_error_handler
-import structlog
+from app.llm import get_llm_with_structured_output
 
 logger = structlog.get_logger()
 
 
 class GradeDocument(BaseModel):
     """Schema for document grading decision."""
-    
+
     is_relevant: Literal["yes", "no"] = Field(
         description="Whether the document is relevant to the query: 'yes' or 'no'"
     )
-    reasoning: str = Field(
-        description="Brief explanation for the relevance decision"
-    )
+    reasoning: str = Field(description="Brief explanation for the relevance decision")
 
 
 class GradingResult(BaseModel):
     """Aggregated grading results for all documents."""
-    
-    relevant_docs: List[Document]
+
+    relevant_docs: list[Document]
     irrelevant_count: int
     has_relevant_docs: bool
 
@@ -58,28 +56,26 @@ Is this document relevant to answering the query?"""
 def get_grader_chain():
     """
     Create the grader chain with structured output.
-    
+
     Returns:
         Chain that outputs GradeDocument schema
     """
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", GRADER_SYSTEM_PROMPT),
-        ("human", GRADER_HUMAN_PROMPT)
-    ])
-    
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", GRADER_SYSTEM_PROMPT), ("human", GRADER_HUMAN_PROMPT)]
+    )
+
     llm = get_llm_with_structured_output(GradeDocument)
-    
+
     chain = prompt | llm
-    
+
     return chain
 
 
 @chain_error_handler(
     fallback_factory=lambda query, document: GradeDocument(
-        is_relevant="yes",
-        reasoning="Default to relevant due to grading error"
+        is_relevant="yes", reasoning="Default to relevant due to grading error"
     ),
-    error_message="Grading failed"
+    error_message="Grading failed",
 )
 def grade_document(query: str, document: Document) -> GradeDocument:
     """
@@ -93,14 +89,11 @@ def grade_document(query: str, document: Document) -> GradeDocument:
         GradeDocument with is_relevant and reasoning
     """
     chain = get_grader_chain()
-    result = chain.invoke({
-        "query": query,
-        "document": document.page_content
-    })
+    result = chain.invoke({"query": query, "document": document.page_content})
     return result
 
 
-def grade_documents(query: str, documents: List[Document]) -> GradingResult:
+def grade_documents(query: str, documents: list[Document]) -> GradingResult:
     """
     Grade all documents and return aggregated results.
 
@@ -113,11 +106,7 @@ def grade_documents(query: str, documents: List[Document]) -> GradingResult:
     """
     if not documents:
         logger.warning("No documents to grade")
-        return GradingResult(
-            relevant_docs=[],
-            irrelevant_count=0,
-            has_relevant_docs=False
-        )
+        return GradingResult(relevant_docs=[], irrelevant_count=0, has_relevant_docs=False)
 
     relevant_docs = []
     irrelevant_count = 0
@@ -134,11 +123,11 @@ def grade_documents(query: str, documents: List[Document]) -> GradingResult:
         "Document grading complete",
         total=len(documents),
         relevant=len(relevant_docs),
-        irrelevant=irrelevant_count
+        irrelevant=irrelevant_count,
     )
 
     return GradingResult(
         relevant_docs=relevant_docs,
         irrelevant_count=irrelevant_count,
-        has_relevant_docs=len(relevant_docs) > 0
+        has_relevant_docs=len(relevant_docs) > 0,
     )

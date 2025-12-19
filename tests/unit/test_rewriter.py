@@ -2,17 +2,18 @@
 Unit tests for Rewriter Chain.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from app.chains.rewriter import (
-    RewrittenQuery,
-    rewrite_query,
-    get_rewriter_chain,
-    format_previous_attempts,
-    REWRITER_SYSTEM_PROMPT,
     REWRITER_HUMAN_PROMPT,
-    REWRITER_SIMPLE_PROMPT
+    REWRITER_SIMPLE_PROMPT,
+    REWRITER_SYSTEM_PROMPT,
+    RewrittenQuery,
+    format_previous_attempts,
+    get_rewriter_chain,
+    rewrite_query,
 )
 
 
@@ -23,7 +24,7 @@ class TestRewrittenQuery:
         """Test creating a rewritten query."""
         query = RewrittenQuery(
             rewritten_query="AI in medical diagnosis",
-            strategy="Expanded with domain-specific terms"
+            strategy="Expanded with domain-specific terms",
         )
         assert query.rewritten_query == "AI in medical diagnosis"
         assert "domain-specific" in query.strategy
@@ -103,8 +104,7 @@ class TestRewriterChain:
         """Test rewriting query on first attempt."""
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = RewrittenQuery(
-            rewritten_query="AI medical diagnosis healthcare",
-            strategy="Expanded with synonyms"
+            rewritten_query="AI medical diagnosis healthcare", strategy="Expanded with synonyms"
         )
         mock_get_chain.return_value = mock_chain
 
@@ -115,7 +115,7 @@ class TestRewriterChain:
         mock_chain.invoke.assert_called_once()
         # Should be called without history (None means no history)
         call_args = mock_get_chain.call_args
-        assert call_args[1]['with_history'] in [False, None, []]
+        assert call_args[1]["with_history"] in [False, None, []]
 
     @pytest.mark.unit
     @patch("app.chains.rewriter.get_rewriter_chain")
@@ -124,7 +124,7 @@ class TestRewriterChain:
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = RewrittenQuery(
             rewritten_query="artificial intelligence diagnostics",
-            strategy="Tried different terminology"
+            strategy="Tried different terminology",
         )
         mock_get_chain.return_value = mock_chain
 
@@ -160,14 +160,13 @@ class TestRewriterChain:
         """Test rewriting with empty previous attempts list."""
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = RewrittenQuery(
-            rewritten_query="Better query",
-            strategy="Improved"
+            rewritten_query="Better query", strategy="Improved"
         )
         mock_get_chain.return_value = mock_chain
 
         # Empty list should be treated as no history
-        result = rewrite_query("Query", previous_attempts=[])
+        rewrite_query("Query", previous_attempts=[])
 
         # Empty list is falsy, so with_history will be the empty list itself
         call_args = mock_get_chain.call_args
-        assert call_args[1]['with_history'] in [False, None, []]
+        assert call_args[1]["with_history"] in [False, None, []]

@@ -5,23 +5,23 @@ Checks if the generated answer is grounded in the retrieved
 context and doesn't contain fabricated information.
 """
 
-from typing import List, Literal
+from typing import Literal
 
-from langchain_core.prompts import ChatPromptTemplate
+import structlog
 from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from app.llm import get_llm_with_structured_output
 from app.chains.generator import format_documents
 from app.errors import chain_error_handler
-import structlog
+from app.llm import get_llm_with_structured_output
 
 logger = structlog.get_logger()
 
 
 class HallucinationCheck(BaseModel):
     """Schema for hallucination check result."""
-    
+
     is_grounded: Literal["yes", "no"] = Field(
         description="Whether the answer is grounded in the context: 'yes' or 'no'"
     )
@@ -35,13 +35,11 @@ class HallucinationCheck(BaseModel):
 
 class AnswerRelevanceCheck(BaseModel):
     """Schema for answer relevance check result."""
-    
+
     is_relevant: Literal["yes", "no"] = Field(
         description="Whether the answer addresses the query: 'yes' or 'no'"
     )
-    reasoning: str = Field(
-        description="Explanation of the relevance assessment"
-    )
+    reasoning: str = Field(description="Explanation of the relevance assessment")
 
 
 HALLUCINATION_SYSTEM_PROMPT = """You are a hallucination detector for a RAG system. Your job is to verify that generated answers are grounded in the provided context.
@@ -87,53 +85,46 @@ Does this answer properly address the query?"""
 def get_hallucination_chain():
     """
     Create the hallucination checker chain.
-    
+
     Returns:
         Chain that outputs HallucinationCheck schema
     """
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", HALLUCINATION_SYSTEM_PROMPT),
-        ("human", HALLUCINATION_HUMAN_PROMPT)
-    ])
-    
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", HALLUCINATION_SYSTEM_PROMPT), ("human", HALLUCINATION_HUMAN_PROMPT)]
+    )
+
     llm = get_llm_with_structured_output(HallucinationCheck)
-    
+
     chain = prompt | llm
-    
+
     return chain
 
 
 def get_relevance_chain():
     """
     Create the answer relevance chain.
-    
+
     Returns:
         Chain that outputs AnswerRelevanceCheck schema
     """
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", RELEVANCE_SYSTEM_PROMPT),
-        ("human", RELEVANCE_HUMAN_PROMPT)
-    ])
-    
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", RELEVANCE_SYSTEM_PROMPT), ("human", RELEVANCE_HUMAN_PROMPT)]
+    )
+
     llm = get_llm_with_structured_output(AnswerRelevanceCheck)
-    
+
     chain = prompt | llm
-    
+
     return chain
 
 
 @chain_error_handler(
     fallback_factory=lambda answer, documents: HallucinationCheck(
-        is_grounded="yes",
-        confidence="low",
-        issues="Check failed - defaulting to grounded"
+        is_grounded="yes", confidence="low", issues="Check failed - defaulting to grounded"
     ),
-    error_message="Hallucination check failed"
+    error_message="Hallucination check failed",
 )
-def check_hallucination(
-    answer: str,
-    documents: List[Document]
-) -> HallucinationCheck:
+def check_hallucination(answer: str, documents: list[Document]) -> HallucinationCheck:
     """
     Check if an answer contains hallucinations.
 
@@ -149,21 +140,16 @@ def check_hallucination(
         return HallucinationCheck(
             is_grounded="no",
             confidence="high",
-            issues="No context documents provided - cannot verify grounding"
+            issues="No context documents provided - cannot verify grounding",
         )
 
     chain = get_hallucination_chain()
     context = format_documents(documents)
 
-    result = chain.invoke({
-        "context": context,
-        "answer": answer
-    })
+    result = chain.invoke({"context": context, "answer": answer})
 
     logger.info(
-        "Hallucination check complete",
-        is_grounded=result.is_grounded,
-        confidence=result.confidence
+        "Hallucination check complete", is_grounded=result.is_grounded, confidence=result.confidence
     )
 
     return result
@@ -171,15 +157,11 @@ def check_hallucination(
 
 @chain_error_handler(
     fallback_factory=lambda query, answer: AnswerRelevanceCheck(
-        is_relevant="yes",
-        reasoning="Check failed - defaulting to relevant"
+        is_relevant="yes", reasoning="Check failed - defaulting to relevant"
     ),
-    error_message="Relevance check failed"
+    error_message="Relevance check failed",
 )
-def check_answer_relevance(
-    query: str,
-    answer: str
-) -> AnswerRelevanceCheck:
+def check_answer_relevance(query: str, answer: str) -> AnswerRelevanceCheck:
     """
     Check if an answer is relevant to the query.
 
@@ -192,14 +174,8 @@ def check_answer_relevance(
     """
     chain = get_relevance_chain()
 
-    result = chain.invoke({
-        "query": query,
-        "answer": answer
-    })
+    result = chain.invoke({"query": query, "answer": answer})
 
-    logger.info(
-        "Answer relevance check complete",
-        is_relevant=result.is_relevant
-    )
+    logger.info("Answer relevance check complete", is_relevant=result.is_relevant)
 
     return result
