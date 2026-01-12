@@ -27,14 +27,22 @@ class GenerationResult(BaseModel):
 
 GENERATOR_SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
 
-Guidelines:
-- Answer the question using ONLY the information from the provided context
-- If the context doesn't contain enough information to answer, say so clearly
-- Be concise but thorough
-- Do not make up information not present in the context
-- If multiple sources provide relevant information, synthesize them coherently
+CRITICAL RULES - FOLLOW STRICTLY:
+1. If the user specifies "in X lines" or "in X sentences", OUTPUT EXACTLY THAT MANY - NO MORE, NO LESS
+2. NEVER include mathematical formulas, equations, or notation (e.g., "MultiHead(Q,K,V) = ...", "headi = ...")
+3. NEVER include variable names, parameter matrices, or code-like syntax (e.g., "WQ", "KW K", "i,VW V")
+4. NEVER include implementation details, figure references, or citations unless explicitly asked
+5. Extract ONLY the high-level concepts and key ideas - ignore all technical notation
 
-Context will be provided as numbered passages. Use them to formulate your answer."""
+Answer Guidelines:
+- Answer using ONLY the conceptual information from the provided context
+- Be concise and focused - extract key ideas, not formulas or implementation
+- Write in plain, natural language suitable for a general technical audience
+- Synthesize information - do not copy verbatim from the context
+- If the context doesn't contain enough information, say so clearly
+- Do not make up information not present in the context
+
+Context will be provided as numbered passages. Extract the core concepts to formulate your answer."""
 
 GENERATOR_HUMAN_PROMPT = """Context:
 {context}
