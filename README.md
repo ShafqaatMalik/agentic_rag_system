@@ -19,6 +19,26 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 - Auto-scaling: 0-2 instances based on traffic
 - Production-ready with structured logging and monitoring
 
+## Screenshots
+
+### Welcome Screen
+![Welcome Screen](docs/screenshots/01-welcome.png)
+
+### Document Upload
+![Document Upload](docs/screenshots/02-upload.png)
+
+### Successful Upload
+![Successful Upload](docs/screenshots/03-successful%20upload.png)
+
+### Query & Response
+![Query Response](docs/screenshots/04-query%20response.png)
+
+### Source Attribution
+![Sources](docs/screenshots/05-sources.png)
+
+### Response Latency
+![Latency](docs/screenshots/06-latency.png)
+
 ### Want to Test It Yourself?
 
 **Option 1: Deploy Your Own Instance**
