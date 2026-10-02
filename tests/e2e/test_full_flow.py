@@ -69,6 +69,7 @@ class TestFullFlow:
         assert result["iteration_count"] == 0
         # Router classification is skipped while both labels share a path
         assert result["query_type"] is None
+        assert result["is_grounded"] is True
 
     @pytest.mark.e2e
     @pytest.mark.asyncio
@@ -177,6 +178,9 @@ class TestNoRelevantDocsFlow:
             or "apologize" in result["generation"].lower()
         )
         assert result["iteration_count"] == 3
+        # No answer was generated, so nothing was checked
+        assert result["is_grounded"] is None
+        assert result["query"] == "Still not working"
 
 
 class TestStreamingFlow:
@@ -224,6 +228,7 @@ class TestStreamingFlow:
         mock_stream.assert_called_once()
         mock_generate.assert_not_called()
         mock_hallucination.assert_called_once_with(text, [doc])
+        assert events[-1]["data"]["check_hallucination"]["is_grounded"] is True
         assert events[-1]["type"] == "done"
         timing = events[-1]["data"]["check_hallucination"]["timing"]
         assert {"route", "retrieve", "grade", "generate", "check_hallucination"} <= set(timing)

@@ -272,6 +272,8 @@ async def query(request: QueryRequest):
             query_type=final_state.get("query_type"),
             iterations=final_state.get("iteration_count", 0),
             status=status,
+            is_grounded=final_state.get("is_grounded"),
+            final_query=final_state.get("query"),
             latency_ms=round(total_latency_ms, 2) if total_latency_ms else None,
             latency_breakdown=latency_breakdown,
         )
@@ -313,6 +315,8 @@ async def query_stream(request: QueryRequest):
         try:
             final_state = None
             documents = []
+            is_grounded = None
+            final_query = request.query
             full_answer = ""
 
             # Stream through the pipeline with token-by-token generation
@@ -329,6 +333,10 @@ async def query_stream(request: QueryRequest):
                     for _node_name, node_state in update_data.items():
                         if isinstance(node_state, dict) and node_state.get("documents"):
                             documents = node_state["documents"]
+                        if isinstance(node_state, dict) and "is_grounded" in node_state:
+                            is_grounded = node_state["is_grounded"]
+                        if isinstance(node_state, dict) and node_state.get("query"):
+                            final_query = node_state["query"]
                     final_state = update_data
                 elif update_type == "done":
                     final_state = update_data
@@ -370,7 +378,12 @@ async def query_stream(request: QueryRequest):
                             break
 
             # Send completion
-            yield {"event": "done", "data": json.dumps({"status": "complete"})}
+            yield {
+                "event": "done",
+                "data": json.dumps(
+                    {"status": "complete", "is_grounded": is_grounded, "final_query": final_query}
+                ),
+            }
 
         except Exception as e:
             # Sources and timing are only sent after the pipeline completes, so none go out here

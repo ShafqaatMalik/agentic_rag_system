@@ -221,7 +221,7 @@ def check_hallucination_node(state: AgentState) -> dict[str, Any]:
         state: Current agent state
 
     Returns:
-        State update (currently just logs, could add hallucination flag)
+        State update with is_grounded (the answer is flagged, not regenerated)
     """
     logger.info("Node: check_hallucination")
 
@@ -234,9 +234,7 @@ def check_hallucination_node(state: AgentState) -> dict[str, Any]:
         issues=result.issues[:50] if result.issues != "None" else "None",
     )
 
-    # If hallucination detected, we could trigger regeneration
-    # For now, we log and continue (could extend state with hallucination_detected flag)
-    return {}
+    return {"is_grounded": result.is_grounded == "yes"}
 
 
 @time_node("no_relevant_docs")

@@ -27,6 +27,8 @@ class AgentState(TypedDict):
 
     # Generation
     generation: str | None
+    # Hallucination check verdict; None until the check has run
+    is_grounded: bool | None
 
     # Control flow
     iteration_count: int
@@ -59,6 +61,7 @@ def create_initial_state(query: str) -> AgentState:
         documents=[],
         documents_relevant=False,
         generation=None,
+        is_grounded=None,
         iteration_count=0,
         query_type=None,
         rewrite_history=[],

@@ -75,6 +75,12 @@ class QueryResponse(BaseModel):
     query_type: str | None = None
     iterations: int
     status: Literal["success", "no_relevant_docs", "error"]
+    is_grounded: bool | None = Field(
+        None, description="Hallucination check verdict; None if no answer was checked"
+    )
+    final_query: str | None = Field(
+        None, description="Query used for the final retrieval (after any rewrites)"
+    )
     latency_ms: float | None = Field(None, description="Total latency in milliseconds")
     latency_breakdown: dict | None = Field(None, description="Latency breakdown by component")
 

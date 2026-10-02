@@ -80,6 +80,7 @@ class TestQueryEndpoint:
             "iteration_count": 0,
             "query_type": "simple",
             "rewrite_history": [],
+            "is_grounded": False,
         }
 
         response = client.post("/query", json={"query": "What is the answer?"})
@@ -89,6 +90,26 @@ class TestQueryEndpoint:
         assert data["answer"] == "This is the answer."
         assert data["status"] == "success"
         assert len(data["sources"]) == 1
+        assert data["is_grounded"] is False
+        assert data["final_query"] == "Test query"
+
+    @pytest.mark.e2e
+    @patch("app.api.main.run_rag_pipeline")
+    def test_query_no_relevant_docs_has_no_grounding_verdict(self, mock_pipeline, client):
+        """Test is_grounded is None when no answer was checked, and final_query is the rewrite."""
+        mock_pipeline.return_value = {
+            "query": "rewritten query",
+            "documents": [],
+            "documents_relevant": False,
+            "generation": "I couldn't find relevant information.",
+            "iteration_count": 3,
+            "is_grounded": None,
+        }
+
+        data = client.post("/query", json={"query": "original"}).json()
+
+        assert data["is_grounded"] is None
+        assert data["final_query"] == "rewritten query"
 
     @pytest.mark.e2e
     @patch("app.api.main.run_rag_pipeline")
@@ -170,6 +191,42 @@ class TestQueryStreamEndpoint:
         assert isinstance(timing["total_ms"], float)
         assert timing["total_ms"] >= 0
         assert timing["breakdown"] == {"retrieve": 100.0, "generate": 200.0}
+
+
+class TestStreamDoneEvent:
+    """Tests for the stream's done event."""
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_done_event_has_grounding_and_final_query(self, mock_stream, client):
+        """Test the done event carries is_grounded and the rewritten query."""
+
+        async def fake_stream(query):
+            yield {"type": "state_update", "data": {"rewrite": {"query": "rewritten"}}}
+            yield {"type": "token", "data": "Answer"}
+            yield {
+                "type": "state_update",
+                "data": {"check_hallucination": {"is_grounded": False, "timing": {"x": 0.1}}},
+            }
+            yield {
+                "type": "done",
+                "data": {"check_hallucination": {"is_grounded": False, "timing": {"x": 0.1}}},
+            }
+
+        mock_stream.side_effect = fake_stream
+
+        response = client.post("/query/stream", json={"query": "original"})
+
+        events = [
+            json.loads(line[len("data:") :])
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+        assert events[-1] == {
+            "status": "complete",
+            "is_grounded": False,
+            "final_query": "rewritten",
+        }
 
 
 class TestQueryErrors:

@@ -6,7 +6,7 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 
 - **Query Classification (paused)**: A router chain can classify queries as simple or complex; because both labels take the same retrieval path today, its LLM call is skipped
 - **Self-Correcting Retrieval**: Grades all retrieved chunks for relevance in one LLM call and rewrites the query when needed (up to 3 attempts)
-- **Hallucination Check**: Checks each answer against the retrieved context and flags ungrounded answers in the logs; it does not regenerate them
+- **Hallucination Check**: Checks each answer against the retrieved context and flags ungrounded answers (`is_grounded` in the API response); it does not regenerate them
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
 - **RAG Evaluation**: Built-in metrics for faithfulness, relevance, precision, and recall
 - **Production Ready**: Comprehensive testing, Docker support, CI/CD pipeline, structured logging
@@ -69,7 +69,7 @@ START → Router (skips LLM call) → Retriever → Grader → [Decision]
          END
 ```
 
-The router node currently skips its LLM classification, because the simple and complex labels would both lead to the retriever; the router chain is kept for when they diverge. The grader judges all retrieved chunks in a single call. A normal query makes three LLM calls: grade, generate and the hallucination check. The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context (logged as `is_grounded=False`); it does not regenerate them or change the response. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
+The router node currently skips its LLM classification, because the simple and complex labels would both lead to the retriever; the router chain is kept for when they diverge. The grader judges all retrieved chunks in a single call. A normal query makes three LLM calls: grade, generate and the hallucination check. The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context and reports the verdict as `is_grounded` in the `/query` response and the stream's `done` event; it does not regenerate the answer. Responses also include `final_query`, the query used for the last retrieval after any rewrites. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
 
 ## Rate Limits and Failures
 
@@ -163,7 +163,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 157 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 159 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|
