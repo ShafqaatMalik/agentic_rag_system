@@ -17,6 +17,7 @@ from app.chains.hallucination_checker import (
     get_hallucination_chain,
     get_relevance_chain,
 )
+from app.errors import LLMError
 
 
 class TestHallucinationCheck:
@@ -163,19 +164,18 @@ class TestHallucinationCheckerChain:
 
     @pytest.mark.unit
     @patch("app.chains.hallucination_checker.get_hallucination_chain")
-    def test_check_hallucination_fallback_on_error(self, mock_get_chain):
-        """Test that hallucination checker falls back on error."""
+    def test_check_hallucination_fails_closed_on_error(self, mock_get_chain):
+        """Test a failed hallucination check raises instead of counting as grounded."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
         docs = [Document(page_content="Test", metadata={})]
-        result = check_hallucination("Answer", docs)
+        with pytest.raises(LLMError) as exc_info:
+            check_hallucination("Answer", docs)
 
-        # Should fallback to grounded (conservative)
-        assert result.is_grounded == "yes"
-        assert result.confidence == "low"
-        assert "failed" in result.issues.lower()
+        assert exc_info.value.details["rate_limited"] is False
+        mock_chain.invoke.assert_called_once()  # not a retryable error
 
     @pytest.mark.unit
     @patch("app.chains.hallucination_checker.get_relevance_chain")
@@ -216,14 +216,11 @@ class TestHallucinationCheckerChain:
 
     @pytest.mark.unit
     @patch("app.chains.hallucination_checker.get_relevance_chain")
-    def test_check_answer_relevance_fallback_on_error(self, mock_get_chain):
-        """Test that relevance checker falls back on error."""
+    def test_check_answer_relevance_fails_closed_on_error(self, mock_get_chain):
+        """Test a failed relevance check raises instead of counting as relevant."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
-        result = check_answer_relevance("Query", "Answer")
-
-        # Should fallback to relevant (conservative)
-        assert result.is_relevant == "yes"
-        assert "failed" in result.reasoning.lower()
+        with pytest.raises(LLMError):
+            check_answer_relevance("Query", "Answer")

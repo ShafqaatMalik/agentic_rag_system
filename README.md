@@ -71,6 +71,12 @@ START → Router (skips LLM call) → Retriever → Grader → [Decision]
 
 The router node currently skips its LLM classification, because the simple and complex labels would both lead to the retriever; the router chain is kept for when they diverge. The grader judges all retrieved chunks in a single call. A normal query makes three LLM calls: grade, generate and the hallucination check. The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context (logged as `is_grounded=False`); it does not regenerate them or change the response. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
 
+## Rate Limits and Failures
+
+The defaults suit the Gemini free tier (15 requests per minute per model). All LLM calls share a client-side rate limiter (0.2 requests/s with a burst of 3), so a normal three-call query starts immediately and bursts queue instead of hitting 429 errors. If Gemini still returns a 429, the call is retried once after the wait the server suggests, as long as that wait is 40 seconds or less.
+
+Failures are never hidden: a failed grading or hallucination check is never treated as relevant or grounded. If a call still fails, `/query` returns `status: "error"` with a clear message (HTTP 429 with `Retry-After` for rate limits), and `/query/stream` sends an `error` event with no sources.
+
 ## Quick Start
 
 The app runs locally via Docker; the image is containerised and Cloud Run-deployable.
@@ -157,7 +163,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 127 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 149 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|
@@ -227,6 +233,8 @@ agentic_rag_system/
 | `GOOGLE_API_KEY` | Required | Google API key for Gemini |
 | `LLM_MODEL` | `gemini-flash-lite-latest` | LLM model to use |
 | `LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
+| `LLM_REQUESTS_PER_SECOND` | `0.2` | Client-side rate limit shared by all LLM calls |
+| `LLM_MAX_BURST` | `3` | Calls allowed back to back before the rate limit applies |
 | `EMBEDDING_MODEL` | `models/gemini-embedding-001` | Embedding model for ChromaDB |
 | `COLLECTION_NAME` | `documents` | ChromaDB collection name |
 | `RETRIEVAL_K` | `4` | Number of documents to retrieve |

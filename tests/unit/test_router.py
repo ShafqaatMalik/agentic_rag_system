@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.chains.router import ROUTER_SYSTEM_PROMPT, RouteQuery, get_router_chain, route_query
+from app.errors import LLMError
 
 
 class TestRouteQuery:
@@ -85,17 +86,14 @@ class TestRouterChain:
 
     @pytest.mark.unit
     @patch("app.chains.router.get_router_chain")
-    def test_route_query_fallback_on_error(self, mock_get_chain):
-        """Test that router falls back to simple on error."""
+    def test_route_query_raises_on_error(self, mock_get_chain):
+        """Test a failed classification raises instead of defaulting to simple."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
-        result = route_query("Test query")
-
-        # Should fallback to simple
-        assert result.query_type == "simple"
-        assert "error" in result.reasoning.lower()
+        with pytest.raises(LLMError):
+            route_query("Test query")
 
 
 class TestRouterClassification:

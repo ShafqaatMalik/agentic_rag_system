@@ -13,7 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from app.chains.generator import format_documents
-from app.errors import chain_error_handler
+from app.errors import handle_llm_error, llm_retry
 from app.llm import get_llm_with_structured_output
 
 logger = structlog.get_logger()
@@ -118,12 +118,8 @@ def get_relevance_chain():
     return chain
 
 
-@chain_error_handler(
-    fallback_factory=lambda answer, documents: HallucinationCheck(
-        is_grounded="yes", confidence="low", issues="Check failed - defaulting to grounded"
-    ),
-    error_message="Hallucination check failed",
-)
+@handle_llm_error
+@llm_retry
 def check_hallucination(answer: str, documents: list[Document]) -> HallucinationCheck:
     """
     Check if an answer contains hallucinations.
@@ -155,12 +151,8 @@ def check_hallucination(answer: str, documents: list[Document]) -> Hallucination
     return result
 
 
-@chain_error_handler(
-    fallback_factory=lambda query, answer: AnswerRelevanceCheck(
-        is_relevant="yes", reasoning="Check failed - defaulting to relevant"
-    ),
-    error_message="Relevance check failed",
-)
+@handle_llm_error
+@llm_retry
 def check_answer_relevance(query: str, answer: str) -> AnswerRelevanceCheck:
     """
     Check if an answer is relevant to the query.

@@ -15,6 +15,7 @@ from app.chains.rewriter import (
     get_rewriter_chain,
     rewrite_query,
 )
+from app.errors import LLMError
 
 
 class TestRewrittenQuery:
@@ -141,18 +142,14 @@ class TestRewriterChain:
 
     @pytest.mark.unit
     @patch("app.chains.rewriter.get_rewriter_chain")
-    def test_rewrite_query_fallback_on_error(self, mock_get_chain):
-        """Test that rewriter falls back on error."""
+    def test_rewrite_query_raises_on_error(self, mock_get_chain):
+        """Test a failed rewrite raises instead of inventing a fallback query."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
-        result = rewrite_query("Test query")
-
-        # Should fallback with simple expansion
-        assert "information about" in result.rewritten_query
-        assert "Test query" in result.rewritten_query
-        assert "fallback" in result.strategy.lower()
+        with pytest.raises(LLMError):
+            rewrite_query("Test query")
 
     @pytest.mark.unit
     @patch("app.chains.rewriter.get_rewriter_chain")

@@ -21,6 +21,15 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def reset_sse_exit_event():
+    """sse-starlette binds a module-level exit event to the first event loop; each
+    TestClient runs its own loop, so reset it between streaming tests."""
+    from sse_starlette.sse import AppStatus
+
+    AppStatus.should_exit_event = None
+
+
 class TestHealthEndpoint:
     """Tests for /health endpoint."""
 
@@ -161,6 +170,83 @@ class TestQueryStreamEndpoint:
         assert isinstance(timing["total_ms"], float)
         assert timing["total_ms"] >= 0
         assert timing["breakdown"] == {"retrieve": 100.0, "generate": 200.0}
+
+
+class TestQueryErrors:
+    """Tests that pipeline failures are reported as errors, never as answers."""
+
+    @staticmethod
+    def llm_error(rate_limited, retry_after=None):
+        from app.errors import LLMError
+
+        return LLMError(
+            message="Rate limit message" if rate_limited else "LLM failure message",
+            details={"rate_limited": rate_limited, "retry_after": retry_after},
+        )
+
+    @pytest.mark.e2e
+    @patch("app.api.main.run_rag_pipeline")
+    def test_query_rate_limited(self, mock_pipeline, client):
+        """Test a rate limit returns 429, Retry-After and status error."""
+        mock_pipeline.side_effect = self.llm_error(rate_limited=True, retry_after=37.2)
+
+        response = client.post("/query", json={"query": "Test"})
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "38"
+        data = response.json()
+        assert data["status"] == "error"
+        assert data["answer"] == "Rate limit message"
+        assert data["sources"] == []
+
+    @pytest.mark.e2e
+    @patch("app.api.main.run_rag_pipeline")
+    def test_query_llm_failure(self, mock_pipeline, client):
+        """Test another LLM failure returns 502 and status error."""
+        mock_pipeline.side_effect = self.llm_error(rate_limited=False)
+
+        response = client.post("/query", json={"query": "Test"})
+
+        assert response.status_code == 502
+        assert response.json()["status"] == "error"
+        assert response.json()["answer"] == "LLM failure message"
+
+    @pytest.mark.e2e
+    @patch("app.api.main.run_rag_pipeline")
+    def test_query_unexpected_failure_hides_internals(self, mock_pipeline, client):
+        """Test an unexpected failure returns 500 with a generic message."""
+        mock_pipeline.side_effect = RuntimeError("chroma exploded at /secret/path")
+
+        response = client.post("/query", json={"query": "Test"})
+
+        assert response.status_code == 500
+        data = response.json()
+        assert data["status"] == "error"
+        assert "secret" not in data["answer"]
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_stream_error_event_without_sources(self, mock_stream, client):
+        """Test a failure mid-pipeline sends one error event and no sources or timing."""
+        from langchain_core.documents import Document
+
+        error = self.llm_error(rate_limited=True, retry_after=30)
+
+        async def failing_stream(query):
+            doc = Document(page_content="Retrieved", metadata={"source": "doc.pdf"})
+            yield {"type": "state_update", "data": {"retrieve": {"documents": [doc]}}}
+            raise error
+
+        mock_stream.side_effect = failing_stream
+
+        response = client.post("/query/stream", json={"query": "Test"})
+
+        events = [
+            json.loads(line[len("data:") :])
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+        assert events == [{"error": "Rate limit message"}]
 
 
 class TestIngestEndpoint:

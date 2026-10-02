@@ -15,7 +15,7 @@ import structlog
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from app.errors import chain_error_handler
+from app.errors import handle_llm_error, llm_retry
 from app.llm import get_llm_with_structured_output
 
 logger = structlog.get_logger()
@@ -66,12 +66,8 @@ def get_router_chain():
     return chain
 
 
-@chain_error_handler(
-    fallback_factory=lambda query: RouteQuery(
-        query_type="simple", reasoning="Default routing due to classification error"
-    ),
-    error_message="Router failed, defaulting to simple",
-)
+@handle_llm_error
+@llm_retry
 def route_query(query: str) -> RouteQuery:
     """
     Route a query to determine processing path.

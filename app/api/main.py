@@ -6,13 +6,14 @@ and system management.
 """
 
 import json
+import math
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
@@ -32,6 +33,7 @@ from app.api.schemas import (
     SourceDocument,
 )
 from app.config import get_settings
+from app.errors import DEFAULT_RETRY_WAIT, LLMError
 from app.logging_config import setup_logging
 from app.retrieval.vectorstore import get_vectorstore_manager
 
@@ -195,6 +197,22 @@ async def ingest_directory(request: IngestRequest):
 
 # --- Query Endpoints ---
 
+GENERIC_FAILURE_MESSAGE = "Something went wrong while answering the question. Please try again."
+
+
+def describe_query_failure(error: Exception) -> tuple[str, int, dict[str, str]]:
+    """
+    Map a pipeline failure to a user-facing message, HTTP status and headers.
+
+    Rate limits get 429 with Retry-After; other LLM failures 502; anything else 500.
+    """
+    if isinstance(error, LLMError):
+        if error.details.get("rate_limited"):
+            retry_after = error.details.get("retry_after") or DEFAULT_RETRY_WAIT
+            return error.message, 429, {"Retry-After": str(math.ceil(retry_after))}
+        return error.message, 502, {}
+    return GENERIC_FAILURE_MESSAGE, 500, {}
+
 
 @app.post("/query", response_model=QueryResponse, tags=["Query"])
 async def query(request: QueryRequest):
@@ -257,7 +275,14 @@ async def query(request: QueryRequest):
 
     except Exception as e:
         logger.error("Query failed", query=request.query[:50], error=str(e))
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        message, status_code, headers = describe_query_failure(e)
+        return JSONResponse(
+            status_code=status_code,
+            headers=headers,
+            content=QueryResponse(
+                answer=message, sources=[], iterations=0, status="error"
+            ).model_dump(),
+        )
 
 
 @app.post("/query/stream", tags=["Query"])
@@ -345,8 +370,10 @@ async def query_stream(request: QueryRequest):
             yield {"event": "done", "data": json.dumps({"status": "complete"})}
 
         except Exception as e:
+            # Sources and timing are only sent after the pipeline completes, so none go out here
             logger.error("Streaming query failed", error=str(e))
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            message, _, _ = describe_query_failure(e)
+            yield {"event": "error", "data": json.dumps({"error": message})}
 
     return EventSourceResponse(event_generator())
 

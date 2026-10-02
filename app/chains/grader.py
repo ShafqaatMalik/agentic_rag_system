@@ -12,7 +12,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from app.errors import chain_error_handler
+from app.errors import handle_llm_error, llm_retry
 from app.llm import get_llm_with_structured_output
 
 logger = structlog.get_logger()
@@ -87,17 +87,8 @@ def get_grader_chain():
     return chain
 
 
-@chain_error_handler(
-    fallback_factory=lambda query, documents: BatchGrade(
-        grades=[
-            IndexedGrade(
-                index=i, is_relevant="yes", reasoning="Default to relevant due to grading error"
-            )
-            for i in range(1, len(documents) + 1)
-        ]
-    ),
-    error_message="Grading failed",
-)
+@handle_llm_error
+@llm_retry
 def grade_batch(query: str, documents: list[Document]) -> BatchGrade:
     """
     Grade all documents' relevance to the query in one LLM call.

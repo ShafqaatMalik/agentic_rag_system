@@ -18,6 +18,7 @@ from app.chains.grader import (
     grade_batch,
     grade_documents,
 )
+from app.errors import LLMError
 
 
 def make_batch(*verdicts):
@@ -122,19 +123,27 @@ class TestGraderChain:
 
     @pytest.mark.unit
     @patch("app.chains.grader.get_grader_chain")
-    def test_grade_batch_fallback_on_error(self, mock_get_chain):
-        """Test that grader falls back to relevant on error."""
+    def test_grade_batch_fails_closed_on_error(self, mock_get_chain):
+        """Test a failed grading call raises instead of marking documents relevant."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
         docs = [Document(page_content="A"), Document(page_content="B")]
 
-        result = grade_batch("Test query", docs)
+        with pytest.raises(LLMError):
+            grade_batch("Test query", docs)
 
-        assert [g.index for g in result.grades] == [1, 2]
-        assert all(g.is_relevant == "yes" for g in result.grades)
-        assert "error" in result.grades[0].reasoning.lower()
+    @pytest.mark.unit
+    @patch("app.chains.grader.get_grader_chain")
+    def test_grade_documents_propagates_grading_failure(self, mock_get_chain):
+        """Test grade_documents never turns a grading failure into relevant documents."""
+        mock_chain = MagicMock()
+        mock_chain.invoke.side_effect = Exception("LLM error")
+        mock_get_chain.return_value = mock_chain
+
+        with pytest.raises(LLMError):
+            grade_documents("Test query", [Document(page_content="A")])
 
 
 class TestGradeDocuments:

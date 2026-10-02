@@ -5,13 +5,15 @@ Generates grounded answers based on the retrieved documents,
 with clear attribution to sources.
 """
 
+import asyncio
+
 import structlog
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
-from app.errors import chain_error_handler
+from app.errors import handle_llm_error, llm_retry, retry_wait, to_llm_error
 from app.llm import get_llm
 
 logger = structlog.get_logger()
@@ -120,14 +122,8 @@ def get_no_context_chain():
     return chain
 
 
-@chain_error_handler(
-    fallback_factory=lambda query, documents: GenerationResult(
-        answer="I apologize, but I couldn't generate a response. Please try again.",
-        sources=extract_sources(documents) if documents else [],
-        has_answer=False,
-    ),
-    error_message="Generation failed",
-)
+@handle_llm_error
+@llm_retry
 def generate_answer(query: str, documents: list[Document]) -> GenerationResult:
     """
     Generate an answer based on the query and documents.
@@ -163,32 +159,51 @@ async def generate_answer_stream(query: str, documents: list[Document]):
     """
     Stream generated answer tokens.
 
+    A rate-limited request is retried once (after the server's suggested
+    wait) if it fails before the first token; failures after that raise
+    LLMError, since part of the answer has already been sent.
+
     Args:
         query: The user's input query
         documents: List of relevant documents
 
     Yields:
         Answer tokens as they're generated
+
+    Raises:
+        LLMError: If generation fails
     """
     if not documents:
         chain = get_no_context_chain()
+        inputs = {"query": query}
+    else:
+        chain = get_generator_chain()
+        inputs = {"query": query, "context": format_documents(documents)}
+        logger.info(
+            "Starting answer streaming",
+            query=query[:50],
+            num_sources=len(extract_sources(documents)),
+        )
+
+    for attempt in (1, 2):
+        stream = chain.astream(inputs)
         try:
-            async for chunk in chain.astream({"query": query}):
+            first = await anext(stream)
+        except StopAsyncIteration:
+            return
+        except Exception as e:
+            wait = retry_wait(e)
+            if attempt == 1 and wait is not None:
+                logger.warning("Retrying streaming generation", wait_seconds=wait)
+                await asyncio.sleep(wait)
+                continue
+            raise to_llm_error(e, "generate_answer_stream") from e
+
+        yield first
+        try:
+            async for chunk in stream:
                 yield chunk
         except Exception as e:
-            logger.error("Streaming generation failed", error=str(e))
-            yield "I apologize, but I couldn't generate a response. Please try again."
-        return
-
-    chain = get_generator_chain()
-    context = format_documents(documents)
-    sources = extract_sources(documents)
-
-    try:
-        logger.info("Starting answer streaming", query=query[:50], num_sources=len(sources))
-        async for chunk in chain.astream({"query": query, "context": context}):
-            yield chunk
+            raise to_llm_error(e, "generate_answer_stream") from e
         logger.info("Answer streaming complete")
-    except Exception as e:
-        logger.error("Streaming generation failed", error=str(e))
-        yield "I apologize, but I couldn't generate a response. Please try again."
+        return

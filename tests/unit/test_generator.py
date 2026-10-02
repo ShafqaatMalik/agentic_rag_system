@@ -17,6 +17,7 @@ from app.chains.generator import (
     get_generator_chain,
     get_no_context_chain,
 )
+from app.errors import LLMError
 
 
 class TestGenerationResult:
@@ -169,17 +170,15 @@ class TestGeneratorChain:
 
     @pytest.mark.unit
     @patch("app.chains.generator.get_generator_chain")
-    def test_generate_answer_fallback_on_error(self, mock_get_chain):
-        """Test that generator falls back on error."""
+    def test_generate_answer_raises_on_error(self, mock_get_chain):
+        """Test a failed generation raises instead of returning an apology answer."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
         docs = [Document(page_content="Test", metadata={"source": "test.pdf"})]
 
-        result = generate_answer("Test query", docs)
+        with pytest.raises(LLMError) as exc_info:
+            generate_answer("Test query", docs)
 
-        # Should fallback with apology message
-        assert result.has_answer is False
-        assert "apologize" in result.answer.lower() or "couldn't" in result.answer.lower()
-        assert "test.pdf" in result.sources
+        assert "no answer could be produced" in exc_info.value.message

@@ -9,7 +9,7 @@ import structlog
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from app.errors import chain_error_handler
+from app.errors import handle_llm_error, llm_retry
 from app.llm import get_llm_with_structured_output
 
 logger = structlog.get_logger()
@@ -85,13 +85,8 @@ def format_previous_attempts(attempts: list[str]) -> str:
     return "\n".join(f"- {attempt}" for attempt in attempts)
 
 
-@chain_error_handler(
-    fallback_factory=lambda query, previous_attempts=None: RewrittenQuery(
-        rewritten_query=f"information about {query}",
-        strategy="Fallback: simple expansion due to rewriter error",
-    ),
-    error_message="Rewriter failed",
-)
+@handle_llm_error
+@llm_retry
 def rewrite_query(query: str, previous_attempts: list[str] | None = None) -> RewrittenQuery:
     """
     Rewrite a query to improve retrieval.

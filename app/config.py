@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_model: str = Field(default="gemini-flash-lite-latest", env="LLM_MODEL")
     llm_temperature: float = Field(default=0.0, env="LLM_TEMPERATURE")
+    # Client-side rate limit shared by all LLM calls. The Gemini free tier allows
+    # 15 requests/min per model; a burst of 3 at 0.2/s never exceeds that in any minute.
+    llm_requests_per_second: float = Field(default=0.2, env="LLM_REQUESTS_PER_SECOND")
+    llm_max_burst: int = Field(default=3, env="LLM_MAX_BURST")
 
     # Vector Store Configuration
     chroma_persist_directory: str = Field(default="./chroma_db", env="CHROMA_PERSIST_DIR")

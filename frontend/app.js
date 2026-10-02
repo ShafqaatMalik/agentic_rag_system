@@ -522,7 +522,9 @@ class AgenticRAG {
                         }
 
                         if (data.error) {
-                            this.updateMessageContent(assistantMessageDiv, 'Error: ' + data.error);
+                            // Replace any partial answer so the saved conversation shows the error too
+                            fullContent = 'Error: ' + data.error;
+                            this.updateMessageContent(assistantMessageDiv, fullContent);
                         }
                     } catch (e) {
                         // Ignore parse errors for incomplete chunks
