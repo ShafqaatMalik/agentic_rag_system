@@ -8,10 +8,12 @@ from app.chains.generator import (
     get_generator_chain,
 )
 from app.chains.grader import (
+    BatchGrade,
     GradeDocument,
     GradingResult,
+    IndexedGrade,
     get_grader_chain,
-    grade_document,
+    grade_batch,
     grade_documents,
 )
 from app.chains.hallucination_checker import (
@@ -32,8 +34,10 @@ __all__ = [
     "get_router_chain",
     # Grader
     "GradeDocument",
+    "IndexedGrade",
+    "BatchGrade",
     "GradingResult",
-    "grade_document",
+    "grade_batch",
     "grade_documents",
     "get_grader_chain",
     # Generator

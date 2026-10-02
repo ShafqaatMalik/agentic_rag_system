@@ -9,12 +9,25 @@ from langchain_core.documents import Document
 
 from app.chains.grader import (
     GRADER_SYSTEM_PROMPT,
+    BatchGrade,
     GradeDocument,
     GradingResult,
+    IndexedGrade,
+    format_documents_for_grading,
     get_grader_chain,
-    grade_document,
+    grade_batch,
     grade_documents,
 )
+
+
+def make_batch(*verdicts):
+    """Build a BatchGrade with 1-based indexes from 'yes'/'no' verdicts."""
+    return BatchGrade(
+        grades=[
+            IndexedGrade(index=i, is_relevant=v, reasoning="test")
+            for i, v in enumerate(verdicts, 1)
+        ]
+    )
 
 
 class TestGradeDocument:
@@ -69,83 +82,69 @@ class TestGraderChain:
     @pytest.mark.unit
     @patch("app.chains.grader.get_llm_with_structured_output")
     def test_get_grader_chain(self, mock_get_llm):
-        """Test grader chain creation."""
+        """Test grader chain creation uses the batch schema."""
         mock_llm = MagicMock()
         mock_get_llm.return_value = mock_llm
 
         chain = get_grader_chain()
 
-        mock_get_llm.assert_called_once_with(GradeDocument)
+        mock_get_llm.assert_called_once_with(BatchGrade)
         assert chain is not None
 
     @pytest.mark.unit
+    def test_format_documents_for_grading_numbers_documents(self):
+        """Test documents are numbered so grades can be matched back."""
+        docs = [Document(page_content="Alpha"), Document(page_content="Beta")]
+
+        formatted = format_documents_for_grading(docs)
+
+        assert "[Document 1]\nAlpha" in formatted
+        assert "[Document 2]\nBeta" in formatted
+
+    @pytest.mark.unit
     @patch("app.chains.grader.get_grader_chain")
-    def test_grade_document_relevant(self, mock_get_chain):
-        """Test grading of a relevant document."""
+    def test_grade_batch_single_call(self, mock_get_chain):
+        """Test all documents are graded in one chain call."""
         mock_chain = MagicMock()
-        mock_chain.invoke.return_value = GradeDocument(
-            is_relevant="yes", reasoning="Document discusses AI in healthcare"
-        )
+        mock_chain.invoke.return_value = make_batch("yes", "no", "yes")
         mock_get_chain.return_value = mock_chain
 
-        doc = Document(
-            page_content="AI is transforming healthcare diagnostics",
-            metadata={"source": "healthcare.pdf"},
-        )
+        docs = [Document(page_content=f"Content {i}") for i in range(3)]
 
-        result = grade_document("How is AI used in healthcare?", doc)
+        result = grade_batch("Test query", docs)
 
-        assert result.is_relevant == "yes"
         mock_chain.invoke.assert_called_once()
+        inputs = mock_chain.invoke.call_args.args[0]
+        assert inputs["query"] == "Test query"
+        assert inputs["count"] == 3
+        assert "[Document 3]" in inputs["documents"]
+        assert [g.is_relevant for g in result.grades] == ["yes", "no", "yes"]
 
     @pytest.mark.unit
     @patch("app.chains.grader.get_grader_chain")
-    def test_grade_document_irrelevant(self, mock_get_chain):
-        """Test grading of an irrelevant document."""
-        mock_chain = MagicMock()
-        mock_chain.invoke.return_value = GradeDocument(
-            is_relevant="no", reasoning="Document is about finance, not healthcare"
-        )
-        mock_get_chain.return_value = mock_chain
-
-        doc = Document(
-            page_content="Q3 revenue increased by 25%", metadata={"source": "finance.pdf"}
-        )
-
-        result = grade_document("How is AI used in healthcare?", doc)
-
-        assert result.is_relevant == "no"
-
-    @pytest.mark.unit
-    @patch("app.chains.grader.get_grader_chain")
-    def test_grade_document_fallback_on_error(self, mock_get_chain):
+    def test_grade_batch_fallback_on_error(self, mock_get_chain):
         """Test that grader falls back to relevant on error."""
         mock_chain = MagicMock()
         mock_chain.invoke.side_effect = Exception("LLM error")
         mock_get_chain.return_value = mock_chain
 
-        doc = Document(page_content="Test content", metadata={})
+        docs = [Document(page_content="A"), Document(page_content="B")]
 
-        result = grade_document("Test query", doc)
+        result = grade_batch("Test query", docs)
 
-        # Should fallback to relevant to avoid losing docs
-        assert result.is_relevant == "yes"
-        assert "error" in result.reasoning.lower()
+        assert [g.index for g in result.grades] == [1, 2]
+        assert all(g.is_relevant == "yes" for g in result.grades)
+        assert "error" in result.grades[0].reasoning.lower()
 
 
 class TestGradeDocuments:
     """Tests for batch document grading."""
 
     @pytest.mark.unit
-    @patch("app.chains.grader.grade_document")
-    def test_grade_documents_mixed(self, mock_grade):
+    @patch("app.chains.grader.grade_batch")
+    def test_grade_documents_mixed(self, mock_grade_batch):
         """Test grading multiple documents with mixed relevance."""
-        # Setup mock to return different results
-        mock_grade.side_effect = [
-            GradeDocument(is_relevant="yes", reasoning="Relevant"),
-            GradeDocument(is_relevant="no", reasoning="Irrelevant"),
-            GradeDocument(is_relevant="yes", reasoning="Relevant"),
-        ]
+        mock_grade_batch.return_value = make_batch("yes", "no", "yes")
 
         docs = [
             Document(page_content="Content 1", metadata={"source": "1.pdf"}),
@@ -155,15 +154,16 @@ class TestGradeDocuments:
 
         result = grade_documents("Test query", docs)
 
+        mock_grade_batch.assert_called_once_with("Test query", docs)
         assert result.has_relevant_docs is True
-        assert len(result.relevant_docs) == 2
+        assert result.relevant_docs == [docs[0], docs[2]]
         assert result.irrelevant_count == 1
 
     @pytest.mark.unit
-    @patch("app.chains.grader.grade_document")
-    def test_grade_documents_all_irrelevant(self, mock_grade):
+    @patch("app.chains.grader.grade_batch")
+    def test_grade_documents_all_irrelevant(self, mock_grade_batch):
         """Test when all documents are irrelevant."""
-        mock_grade.return_value = GradeDocument(is_relevant="no", reasoning="Not relevant")
+        mock_grade_batch.return_value = make_batch("no", "no")
 
         docs = [
             Document(page_content="Content 1", metadata={}),
@@ -177,10 +177,40 @@ class TestGradeDocuments:
         assert result.irrelevant_count == 2
 
     @pytest.mark.unit
-    def test_grade_documents_empty_list(self):
-        """Test grading empty document list."""
+    @patch("app.chains.grader.grade_batch")
+    def test_grade_documents_matches_by_index_not_order(self, mock_grade_batch):
+        """Test grades are matched to documents by index, even if returned out of order."""
+        mock_grade_batch.return_value = BatchGrade(
+            grades=[
+                IndexedGrade(index=2, is_relevant="yes", reasoning="test"),
+                IndexedGrade(index=1, is_relevant="no", reasoning="test"),
+            ]
+        )
+        docs = [Document(page_content="First"), Document(page_content="Second")]
+
+        result = grade_documents("Test query", docs)
+
+        assert result.relevant_docs == [docs[1]]
+
+    @pytest.mark.unit
+    @patch("app.chains.grader.grade_batch")
+    def test_grade_documents_missing_grade_is_not_relevant(self, mock_grade_batch):
+        """Test a document the grader omitted is treated as not relevant."""
+        mock_grade_batch.return_value = make_batch("yes")
+        docs = [Document(page_content="Graded"), Document(page_content="Omitted")]
+
+        result = grade_documents("Test query", docs)
+
+        assert result.relevant_docs == [docs[0]]
+        assert result.irrelevant_count == 1
+
+    @pytest.mark.unit
+    @patch("app.chains.grader.grade_batch")
+    def test_grade_documents_empty_list(self, mock_grade_batch):
+        """Test grading empty document list makes no LLM call."""
         result = grade_documents("Test query", [])
 
+        mock_grade_batch.assert_not_called()
         assert result.has_relevant_docs is False
         assert len(result.relevant_docs) == 0
         assert result.irrelevant_count == 0

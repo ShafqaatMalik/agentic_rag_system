@@ -5,7 +5,10 @@ This module defines the complete workflow graph that orchestrates
 the RAG pipeline with self-correction capabilities.
 """
 
+import time
+
 import structlog
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from app.agents.nodes import (
@@ -198,6 +201,11 @@ async def run_rag_pipeline_stream_tokens(query: str):
     """
     Run RAG pipeline with token-by-token streaming.
 
+    The graph pauses before the generate node, the answer is streamed once,
+    and the streamed text is written back as the generate node's output.
+    The graph then resumes, so the hallucination check runs on exactly the
+    answer the user saw.
+
     Args:
         query: User's input query
 
@@ -211,34 +219,39 @@ async def run_rag_pipeline_stream_tokens(query: str):
     logger.info("Starting RAG pipeline (token streaming)", query=query[:50])
 
     initial_state = create_initial_state(query)
-    graph = get_compiled_graph()
+    # A fresh checkpointer per request: the paused state only lives for this stream
+    graph = create_rag_graph().compile(checkpointer=MemorySaver(), interrupt_before=["generate"])
+    config = {"configurable": {"thread_id": "stream"}}
 
     final_state = None
-    documents = []
 
-    # Run through pipeline until we reach generation
-    async for state_update in graph.astream(initial_state):
-        final_state = state_update
-
-        # Extract documents from any node
-        for _node_name, node_state in state_update.items():
-            if isinstance(node_state, dict) and node_state.get("documents"):
-                documents = node_state["documents"]
-
-        # Check if we've reached the generate node
-        if "generate" in state_update:
-            # Yield the pre-generation state
-            yield {"type": "state_update", "data": state_update}
-
-            # Now stream tokens from the generator
-            async for token in generate_answer_stream(query, documents):
-                yield {"type": "token", "data": token}
-
-            # Continue to get remaining nodes (like check_hallucination)
+    # Run route → retrieve → grade (→ rewrite loop) until the pause before generate
+    async for state_update in graph.astream(initial_state, config):
+        if "__interrupt__" in state_update:
             continue
-        else:
-            # Yield other node updates
+        final_state = state_update
+        yield {"type": "state_update", "data": state_update}
+
+    snapshot = graph.get_state(config)
+
+    if "generate" in snapshot.next:
+        state = snapshot.values
+        start = time.time()
+        answer = ""
+        async for token in generate_answer_stream(state["query"], state["documents"]):
+            answer += token
+            yield {"type": "token", "data": token}
+
+        timing = {**state.get("timing", {}), "generate": time.time() - start}
+        graph.update_state(config, {"generation": answer, "timing": timing}, as_node="generate")
+
+        # Resume: check_hallucination → END
+        async for state_update in graph.astream(None, config):
+            final_state = state_update
             yield {"type": "state_update", "data": state_update}
+    elif snapshot.values.get("generation"):
+        # Ended without generating (no relevant documents): send the fallback message
+        yield {"type": "token", "data": snapshot.values["generation"]}
 
     # Send completion signal with final state
     yield {"type": "done", "data": final_state}

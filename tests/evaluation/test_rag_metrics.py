@@ -214,16 +214,18 @@ class TestContextPrecision:
     @patch("app.chains.grader.get_grader_chain")
     def test_precision_with_grader(self, mock_chain):
         """Test precision calculation using our grader chain."""
-        from app.chains.grader import GradeDocument, grade_documents
+        from app.chains.grader import BatchGrade, IndexedGrade, grade_documents
 
         mock_chain_instance = MagicMock()
-        # 2 relevant, 1 irrelevant
+        # 2 relevant, 1 irrelevant, graded in a single call
         mock_chain_instance.invoke = MagicMock(
-            side_effect=[
-                GradeDocument(is_relevant="yes", reasoning="Relevant"),
-                GradeDocument(is_relevant="yes", reasoning="Relevant"),
-                GradeDocument(is_relevant="no", reasoning="Off-topic"),
-            ]
+            return_value=BatchGrade(
+                grades=[
+                    IndexedGrade(index=1, is_relevant="yes", reasoning="Relevant"),
+                    IndexedGrade(index=2, is_relevant="yes", reasoning="Relevant"),
+                    IndexedGrade(index=3, is_relevant="no", reasoning="Off-topic"),
+                ]
+            )
         )
         mock_chain.return_value = mock_chain_instance
 
@@ -235,6 +237,7 @@ class TestContextPrecision:
 
         result = grade_documents("test query", documents)
 
+        mock_chain_instance.invoke.assert_called_once()
         precision = len(result.relevant_docs) / len(documents)
 
         assert precision == pytest.approx(0.67, rel=0.1)

@@ -17,7 +17,6 @@ from app.chains.generator import generate_answer
 from app.chains.grader import grade_documents
 from app.chains.hallucination_checker import check_hallucination
 from app.chains.rewriter import rewrite_query
-from app.chains.router import route_query
 from app.config import get_settings
 from app.retrieval.vectorstore import get_vectorstore_manager
 
@@ -70,17 +69,20 @@ def route_query_node(state: AgentState) -> dict[str, Any]:
     """
     Node: Route the query to determine processing path.
 
+    The router chain (app/chains/router.py) classifies queries as simple or
+    complex, but both labels currently take the same retrieval path, so the
+    LLM call is skipped to save a request per query. Call route_query here
+    again once the labels lead to different paths.
+
     Args:
         state: Current agent state
 
     Returns:
-        State update with query_type
+        Empty state update; query_type stays None
     """
-    logger.info("Node: route_query", query=state["query"][:50])
+    logger.info("Node: route_query (classification skipped)", query=state["query"][:50])
 
-    result = route_query(state["query"])
-
-    return {"query_type": result.query_type}
+    return {}
 
 
 @time_node("retrieve")

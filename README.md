@@ -4,8 +4,8 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 
 ## Features
 
-- **Query Classification**: The router classifies queries as simple or complex; today both take the same retrieval path
-- **Self-Correcting Retrieval**: Grades document relevance and rewrites queries when needed (up to 3 attempts)
+- **Query Classification (paused)**: A router chain can classify queries as simple or complex; because both labels take the same retrieval path today, its LLM call is skipped
+- **Self-Correcting Retrieval**: Grades all retrieved chunks for relevance in one LLM call and rewrites the query when needed (up to 3 attempts)
 - **Hallucination Check**: Checks each answer against the retrieved context and flags ungrounded answers in the logs; it does not regenerate them
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
 - **RAG Evaluation**: Built-in metrics for faithfulness, relevance, precision, and recall
@@ -51,8 +51,9 @@ See the [Quick Start](#quick-start) section below to run it locally with Docker.
 ## Workflow
 
 ```
-START → Router (simple/complex) → Retriever → Grader → [Decision]
-        both types go to retrieval                       │
+START → Router (skips LLM call) → Retriever → Grader → [Decision]
+                                     (one call for all chunks)
+                                                         │
           ┌──────────────────────────┬───────────────────┴───────────────────┐
           ▼                          ▼                                       ▼
    (docs relevant)       (not relevant, rewrites left)       (not relevant, max rewrites reached)
@@ -68,7 +69,7 @@ START → Router (simple/complex) → Retriever → Grader → [Decision]
          END
 ```
 
-The router's simple/complex label is recorded in the state, but both labels currently route to the retriever. The hallucination check flags answers that aren't grounded in the retrieved context (logged as `is_grounded=False`); it does not regenerate them or change the response. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
+The router node currently skips its LLM classification, because the simple and complex labels would both lead to the retriever; the router chain is kept for when they diverge. The grader judges all retrieved chunks in a single call. A normal query makes three LLM calls: grade, generate and the hallucination check. The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context (logged as `is_grounded=False`); it does not regenerate them or change the response. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
 
 ## Quick Start
 
@@ -156,7 +157,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 123 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 127 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|
@@ -188,10 +189,10 @@ agentic_rag_system/
 │   │   └── schemas.py           # Request/response models
 │   ├── chains/
 │   │   ├── generator.py         # Answer generation
-│   │   ├── grader.py            # Document relevance grading
+│   │   ├── grader.py            # Batch document relevance grading
 │   │   ├── hallucination_checker.py  # Groundedness and answer-relevance checks
 │   │   ├── rewriter.py          # Query rewriting
-│   │   └── router.py            # Query classification (simple/complex)
+│   │   └── router.py            # Query classification (simple/complex; currently not called)
 │   ├── retrieval/
 │   │   └── vectorstore.py       # ChromaDB ingestion and retrieval
 │   ├── config.py                # Settings from environment variables

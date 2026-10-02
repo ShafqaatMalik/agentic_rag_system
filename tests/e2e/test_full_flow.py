@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from app.agents.graph import run_rag_pipeline
+from app.agents.graph import run_rag_pipeline, run_rag_pipeline_stream_tokens
 from app.agents.state import create_initial_state
 
 
@@ -17,23 +17,18 @@ class TestFullFlow:
     @pytest.mark.e2e
     @pytest.mark.asyncio
     @patch("app.agents.nodes.get_vectorstore_manager")
-    @patch("app.agents.nodes.route_query")
     @patch("app.agents.nodes.grade_documents")
     @patch("app.agents.nodes.generate_answer")
     @patch("app.agents.nodes.check_hallucination")
     async def test_simple_query_full_flow(
-        self, mock_hallucination, mock_generate, mock_grade, mock_route, mock_vectorstore
+        self, mock_hallucination, mock_generate, mock_grade, mock_vectorstore
     ):
         """Test complete flow for a simple query with relevant documents."""
         from app.chains.generator import GenerationResult
         from app.chains.grader import GradingResult
         from app.chains.hallucination_checker import HallucinationCheck
-        from app.chains.router import RouteQuery
 
         # Setup mocks
-        mock_route.return_value = RouteQuery(
-            query_type="simple", reasoning="Direct factual question"
-        )
 
         mock_vs_instance = MagicMock()
         mock_vs_instance.vectorstore.similarity_search.return_value = [
@@ -72,12 +67,12 @@ class TestFullFlow:
         assert result["generation"] is not None
         assert "AI" in result["generation"] or "healthcare" in result["generation"]
         assert result["iteration_count"] == 0
-        assert result["query_type"] == "simple"
+        # Router classification is skipped while both labels share a path
+        assert result["query_type"] is None
 
     @pytest.mark.e2e
     @pytest.mark.asyncio
     @patch("app.agents.nodes.get_vectorstore_manager")
-    @patch("app.agents.nodes.route_query")
     @patch("app.agents.nodes.grade_documents")
     @patch("app.agents.nodes.rewrite_query")
     @patch("app.agents.nodes.generate_answer")
@@ -90,7 +85,6 @@ class TestFullFlow:
         mock_generate,
         mock_rewrite,
         mock_grade,
-        mock_route,
         mock_vectorstore,
     ):
         """Test flow where initial retrieval fails and query is rewritten."""
@@ -98,12 +92,9 @@ class TestFullFlow:
         from app.chains.grader import GradingResult
         from app.chains.hallucination_checker import HallucinationCheck
         from app.chains.rewriter import RewrittenQuery
-        from app.chains.router import RouteQuery
 
         mock_settings.return_value.max_rewrite_iterations = 3
         mock_settings.return_value.retrieval_k = 4
-
-        mock_route.return_value = RouteQuery(query_type="simple", reasoning="Factual question")
 
         # First retrieval returns docs
         mock_vs_instance = MagicMock()
@@ -148,22 +139,18 @@ class TestNoRelevantDocsFlow:
     @pytest.mark.e2e
     @pytest.mark.asyncio
     @patch("app.agents.nodes.get_vectorstore_manager")
-    @patch("app.agents.nodes.route_query")
     @patch("app.agents.nodes.grade_documents")
     @patch("app.agents.nodes.rewrite_query")
     @patch("app.agents.nodes.get_settings")
     async def test_fallback_after_max_iterations(
-        self, mock_settings, mock_rewrite, mock_grade, mock_route, mock_vectorstore
+        self, mock_settings, mock_rewrite, mock_grade, mock_vectorstore
     ):
         """Test fallback message when max rewrite iterations reached."""
         from app.chains.grader import GradingResult
         from app.chains.rewriter import RewrittenQuery
-        from app.chains.router import RouteQuery
 
         mock_settings.return_value.max_rewrite_iterations = 3
         mock_settings.return_value.retrieval_k = 4
-
-        mock_route.return_value = RouteQuery(query_type="simple", reasoning="Question")
 
         mock_vs_instance = MagicMock()
         mock_vs_instance.vectorstore.similarity_search.return_value = [
@@ -190,6 +177,86 @@ class TestNoRelevantDocsFlow:
             or "apologize" in result["generation"].lower()
         )
         assert result["iteration_count"] == 3
+
+
+class TestStreamingFlow:
+    """Tests for the token-streaming pipeline."""
+
+    @staticmethod
+    async def collect(query):
+        """Run the streaming pipeline and return (events, streamed text)."""
+        events = [u async for u in run_rag_pipeline_stream_tokens(query)]
+        text = "".join(u["data"] for u in events if u["type"] == "token")
+        return events, text
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.agents.nodes.generate_answer")
+    @patch("app.chains.generator.generate_answer_stream")
+    @patch("app.agents.nodes.check_hallucination")
+    async def test_stream_generates_once_and_checks_streamed_answer(
+        self, mock_hallucination, mock_stream, mock_generate, mock_grade, mock_vectorstore
+    ):
+        """Test the answer is generated once and the check sees the streamed text."""
+        from app.chains.grader import GradingResult
+        from app.chains.hallucination_checker import HallucinationCheck
+
+        doc = Document(page_content="Vector databases store embeddings.", metadata={})
+        mock_vectorstore.return_value.vectorstore.similarity_search.return_value = [doc]
+        mock_grade.return_value = GradingResult(
+            relevant_docs=[doc], irrelevant_count=0, has_relevant_docs=True
+        )
+
+        async def fake_stream(query, documents):
+            for token in ["Vector databases ", "store embeddings."]:
+                yield token
+
+        mock_stream.side_effect = fake_stream
+        mock_hallucination.return_value = HallucinationCheck(
+            is_grounded="yes", confidence="high", issues="None"
+        )
+
+        events, text = await self.collect("What is a vector database?")
+
+        assert text == "Vector databases store embeddings."
+        mock_stream.assert_called_once()
+        mock_generate.assert_not_called()
+        mock_hallucination.assert_called_once_with(text, [doc])
+        assert events[-1]["type"] == "done"
+        timing = events[-1]["data"]["check_hallucination"]["timing"]
+        assert {"route", "retrieve", "grade", "generate", "check_hallucination"} <= set(timing)
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.agents.nodes.rewrite_query")
+    @patch("app.chains.generator.generate_answer_stream")
+    @patch("app.agents.nodes.get_settings")
+    async def test_stream_sends_fallback_when_no_relevant_docs(
+        self, mock_settings, mock_stream, mock_rewrite, mock_grade, mock_vectorstore
+    ):
+        """Test the no-relevant-documents message is streamed to the client."""
+        from app.chains.grader import GradingResult
+        from app.chains.rewriter import RewrittenQuery
+
+        mock_settings.return_value.max_rewrite_iterations = 1
+        mock_settings.return_value.retrieval_k = 4
+        mock_vectorstore.return_value.vectorstore.similarity_search.return_value = [
+            Document(page_content="Irrelevant", metadata={})
+        ]
+        mock_grade.return_value = GradingResult(
+            relevant_docs=[], irrelevant_count=1, has_relevant_docs=False
+        )
+        mock_rewrite.return_value = RewrittenQuery(rewritten_query="q2", strategy="test")
+
+        events, text = await self.collect("impossible query")
+
+        assert "couldn't find relevant information" in text
+        mock_stream.assert_not_called()
+        assert events[-1]["type"] == "done"
 
 
 class TestEmptyQueryHandling:

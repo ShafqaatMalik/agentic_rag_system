@@ -1,8 +1,8 @@
 """
 Grader Chain - Evaluates document relevance to the query.
 
-Grades each retrieved document as either relevant or not relevant
-to determine if re-retrieval is needed.
+Grades all retrieved documents as relevant or not relevant in a single
+LLM call, to determine if re-retrieval is needed.
 """
 
 from typing import Literal
@@ -27,6 +27,18 @@ class GradeDocument(BaseModel):
     reasoning: str = Field(description="Brief explanation for the relevance decision")
 
 
+class IndexedGrade(GradeDocument):
+    """Grade for one document in a batch, identified by its position."""
+
+    index: int = Field(description="The document's number from the [Document N] header")
+
+
+class BatchGrade(BaseModel):
+    """Schema for grading all retrieved documents in one call."""
+
+    grades: list[IndexedGrade] = Field(description="One grade per document, in order")
+
+
 class GradingResult(BaseModel):
     """Aggregated grading results for all documents."""
 
@@ -35,7 +47,7 @@ class GradingResult(BaseModel):
     has_relevant_docs: bool
 
 
-GRADER_SYSTEM_PROMPT = """You are a document relevance grader for a RAG system. Your job is to assess whether a retrieved document contains information relevant to answering the user's query.
+GRADER_SYSTEM_PROMPT = """You are a document relevance grader for a RAG system. Your job is to assess whether each retrieved document contains information relevant to answering the user's query.
 
 Guidelines:
 - A document is relevant if it contains information that could help answer the query
@@ -43,14 +55,18 @@ Guidelines:
 - Be generous - if there's any useful information, mark as relevant
 - Consider semantic relevance, not just keyword matching
 
-Respond with whether the document is relevant and brief reasoning."""
+Grade every document independently. For each one, return its number, whether it is relevant, and brief reasoning."""
 
 GRADER_HUMAN_PROMPT = """Query: {query}
 
-Document content:
-{document}
+{documents}
 
-Is this document relevant to answering the query?"""
+Grade each of the {count} documents above for relevance to the query."""
+
+
+def format_documents_for_grading(documents: list[Document]) -> str:
+    """Number documents so each grade can be matched back to its document."""
+    return "\n\n".join(f"[Document {i}]\n{doc.page_content}" for i, doc in enumerate(documents, 1))
 
 
 def get_grader_chain():
@@ -58,13 +74,13 @@ def get_grader_chain():
     Create the grader chain with structured output.
 
     Returns:
-        Chain that outputs GradeDocument schema
+        Chain that outputs BatchGrade schema
     """
     prompt = ChatPromptTemplate.from_messages(
         [("system", GRADER_SYSTEM_PROMPT), ("human", GRADER_HUMAN_PROMPT)]
     )
 
-    llm = get_llm_with_structured_output(GradeDocument)
+    llm = get_llm_with_structured_output(BatchGrade)
 
     chain = prompt | llm
 
@@ -72,25 +88,35 @@ def get_grader_chain():
 
 
 @chain_error_handler(
-    fallback_factory=lambda query, document: GradeDocument(
-        is_relevant="yes", reasoning="Default to relevant due to grading error"
+    fallback_factory=lambda query, documents: BatchGrade(
+        grades=[
+            IndexedGrade(
+                index=i, is_relevant="yes", reasoning="Default to relevant due to grading error"
+            )
+            for i in range(1, len(documents) + 1)
+        ]
     ),
     error_message="Grading failed",
 )
-def grade_document(query: str, document: Document) -> GradeDocument:
+def grade_batch(query: str, documents: list[Document]) -> BatchGrade:
     """
-    Grade a single document's relevance to the query.
+    Grade all documents' relevance to the query in one LLM call.
 
     Args:
         query: The user's input query
-        document: The document to grade
+        documents: The documents to grade
 
     Returns:
-        GradeDocument with is_relevant and reasoning
+        BatchGrade with one indexed grade per document
     """
     chain = get_grader_chain()
-    result = chain.invoke({"query": query, "document": document.page_content})
-    return result
+    return chain.invoke(
+        {
+            "query": query,
+            "documents": format_documents_for_grading(documents),
+            "count": len(documents),
+        }
+    )
 
 
 def grade_documents(query: str, documents: list[Document]) -> GradingResult:
@@ -108,16 +134,16 @@ def grade_documents(query: str, documents: list[Document]) -> GradingResult:
         logger.warning("No documents to grade")
         return GradingResult(relevant_docs=[], irrelevant_count=0, has_relevant_docs=False)
 
-    relevant_docs = []
-    irrelevant_count = 0
+    batch = grade_batch(query, documents)
+    verdicts = {g.index: g.is_relevant for g in batch.grades}
 
-    for doc in documents:
-        grade = grade_document(query, doc)
+    missing = [i for i in range(1, len(documents) + 1) if i not in verdicts]
+    if missing:
+        # An ungraded document is treated as not relevant
+        logger.warning("Grader omitted documents", missing=missing)
 
-        if grade.is_relevant == "yes":
-            relevant_docs.append(doc)
-        else:
-            irrelevant_count += 1
+    relevant_docs = [doc for i, doc in enumerate(documents, 1) if verdicts.get(i) == "yes"]
+    irrelevant_count = len(documents) - len(relevant_docs)
 
     logger.info(
         "Document grading complete",
