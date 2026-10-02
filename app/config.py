@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     google_api_key: str = Field(..., env="GOOGLE_API_KEY")
 
     # LLM Configuration
-    llm_model: str = Field(default="gemini-1.5-flash", env="LLM_MODEL")
+    llm_model: str = Field(default="gemini-flash-lite-latest", env="LLM_MODEL")
     llm_temperature: float = Field(default=0.0, env="LLM_TEMPERATURE")
 
     # Vector Store Configuration
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     collection_name: str = Field(default="documents", env="COLLECTION_NAME")
 
     # Embedding Configuration
-    embedding_model: str = Field(default="models/embedding-001", env="EMBEDDING_MODEL")
+    embedding_model: str = Field(default="models/gemini-embedding-001", env="EMBEDDING_MODEL")
 
     # Retrieval Configuration
     retrieval_k: int = Field(default=4, env="RETRIEVAL_K")

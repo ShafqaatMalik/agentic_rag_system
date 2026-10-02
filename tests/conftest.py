@@ -20,11 +20,11 @@ def mock_settings():
 
     return Settings(
         google_api_key="test-api-key",
-        llm_model="gemini-1.5-flash",
+        llm_model="gemini-flash-lite-latest",
         llm_temperature=0.0,
         chroma_persist_directory="./test_chroma_db",
         collection_name="test_documents",
-        embedding_model="models/embedding-001",
+        embedding_model="models/gemini-embedding-001",
         retrieval_k=4,
         max_rewrite_iterations=3,
         api_host="0.0.0.0",

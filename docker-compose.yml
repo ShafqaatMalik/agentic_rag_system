@@ -8,7 +8,9 @@ services:
       - "8000:8000"
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+      - LLM_MODEL=${LLM_MODEL:-gemini-flash-lite-latest}
+      - PORT=8000
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-models/gemini-embedding-001}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
       - CHROMA_PERSIST_DIR=/app/chroma_db
       - COLLECTION_NAME=${COLLECTION_NAME:-documents}

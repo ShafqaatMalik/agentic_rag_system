@@ -240,26 +240,3 @@ jobs:
       
       - name: Run bandit security scan
         run: bandit -r app/ -ll || true
-
-  # ============================================
-  # Deploy (only on main)
-  # ============================================
-  deploy:
-    name: Deploy
-    runs-on: ubuntu-latest
-    needs: [docker-build, coverage, security]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Deploy notification
-        run: |
-          echo "🚀 Ready for deployment!"
-          echo "Commit: ${{ github.sha }}"
-          echo "Branch: ${{ github.ref_name }}"
-          # Add your deployment steps here:
-          # - Push to container registry
-          # - Deploy to cloud platform
-          # - Update Kubernetes manifests

@@ -1,0 +1,26 @@
+# Secrets: config comes from docker-compose environment, never baked into the image
+.env
+.env.*
+!.env.example
+
+# Local environments and caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local data
+chroma_db/
+chroma_db_old_backup/
+test_chroma_db/
+
+# Repo and OS clutter
+.git/
+.github/
+.DS_Store
+*.exe
+*.png

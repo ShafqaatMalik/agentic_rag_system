@@ -10,14 +10,7 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
 - **RAG Evaluation**: Built-in metrics for faithfulness, relevance, precision, and recall
 - **Production Ready**: Comprehensive testing, Docker support, CI/CD pipeline, structured logging
-- **Cloud Deployed**: Fully containerized and deployed on Google Cloud Run with authentication
-
-
-**Deployment Details:**
-- Deployed on Google Cloud Run (Authenticated)
-- Docker containerized for scalable, serverless execution
-- Auto-scaling: 0-2 instances based on traffic
-- Production-ready with structured logging and monitoring
+- **Containerised**: Runs locally via Docker; containerised and Cloud Run-deployable
 
 ## Screenshots
 
@@ -41,16 +34,7 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 
 ### Want to Test It Yourself?
 
-**Option 1: Deploy Your Own Instance**
-```bash
-# Clone and deploy to your own Cloud Run (requires gcloud CLI)
-git clone <repository-url>
-cd agentic-rag
-gcloud run deploy agentic-rag --source .
-```
-
-**Option 2: Run Locally**
-See the [Quick Start](#quick-start) section below for local setup instructions.
+See the [Quick Start](#quick-start) section below to run it locally with Docker.
 
 ## Architecture
 
@@ -85,47 +69,49 @@ START → Router → Retriever → Grader → [Decision]
 
 ## Quick Start
 
-### Running Locally
+The app runs locally via Docker; the image is containerised and Cloud Run-deployable.
 
 **Prerequisites:**
-- Python 3.11+
-- Google API Key (for Gemini)
-
-**Installation:**
+- Docker Desktop (or Docker Engine with the Compose plugin)
+- A Google API key for Gemini (the free tier works)
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd agentic-rag
+git clone https://github.com/ShafqaatMalik/agentic_rag_system.git
+cd agentic_rag_system
 ```
 
-2. Create virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Configure environment:
+2. Configure environment:
 ```bash
 cp .env.example .env
-# Edit .env and add your GOOGLE_API_KEY
+# Edit .env and set GOOGLE_API_KEY
 ```
 
-**Running the Application:**
-
-Development mode:
+3. Start the app:
 ```bash
+docker compose up --build
+```
+
+4. Ingest documents (PDF, TXT, MD), either by uploading them in the web UI, or via the API:
+```bash
+# A single file
+curl -X POST "http://localhost:8000/ingest/file" -F "file=@document.pdf"
+
+# Everything in ./data (mounted into the container at /app/data)
+curl -X POST "http://localhost:8000/ingest/directory" \
+  -H "Content-Type: application/json" \
+  -d '{"directory_path": "/app/data"}'
+```
+
+5. Open [http://localhost:8000](http://localhost:8000) and start asking questions.
+
+Ingested documents are stored in the `chroma_data` Docker volume and survive restarts. `docker compose down` keeps them; `docker compose down -v` deletes them.
+
+**Running without Docker (development):**
+```bash
+python3.11 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 uvicorn app.api.main:app --reload
-```
-
-Using Docker:
-```bash
-docker-compose up --build
 ```
 
 ### API Endpoints
@@ -167,9 +153,10 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
+The suite has 122 tests; LLM and embedding calls are mocked, so no API key is needed.
+
 | Marker | Purpose | Run Command |
-|--------|---------|---
-----------|
+|--------|---------|-------------|
 | `unit` | Component-level tests | `pytest -m unit` |
 | `integration` | Chain/graph flow tests | `pytest -m integration` |
 | `e2e` | Full pipeline tests | `pytest -m e2e` |
@@ -216,7 +203,8 @@ agentic-rag/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOOGLE_API_KEY` | Required | Google API key for Gemini |
-| `LLM_MODEL` | `gemini-1.5-flash` | LLM model to use |
+| `LLM_MODEL` | `gemini-flash-lite-latest` | LLM model to use |
+| `EMBEDDING_MODEL` | `models/gemini-embedding-001` | Embedding model for ChromaDB |
 | `RETRIEVAL_K` | `4` | Number of documents to retrieve |
 | `MAX_REWRITE_ITERATIONS` | `3` | Max query rewrite attempts |
 

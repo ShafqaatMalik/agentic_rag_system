@@ -64,3 +64,7 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Local backups and notes
+chroma_db_old_backup/
+how to start for demo.png
