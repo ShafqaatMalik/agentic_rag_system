@@ -3,6 +3,7 @@ End-to-end tests for FastAPI endpoints.
 """
 
 # Set environment variables before importing app
+import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -127,6 +128,39 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["sources"] == []
+
+
+class TestQueryStreamEndpoint:
+    """Tests for /query/stream endpoint."""
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_stream_timing_has_total(self, mock_stream, client):
+        """Test the timing event reports a numeric total from partial state updates."""
+
+        async def fake_stream(query):
+            # Like LangGraph's astream: node updates only, no start_time
+            yield {"type": "state_update", "data": {"generate": {"timing": {"retrieve": 0.1}}}}
+            yield {"type": "token", "data": "Answer"}
+            yield {
+                "type": "done",
+                "data": {"check_hallucination": {"timing": {"retrieve": 0.1, "generate": 0.2}}},
+            }
+
+        mock_stream.side_effect = fake_stream
+
+        response = client.post("/query/stream", json={"query": "Test"})
+
+        assert response.status_code == 200
+        events = [
+            json.loads(line[len("data:") :])
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+        timing = next(e for e in events if "total_ms" in e)
+        assert isinstance(timing["total_ms"], float)
+        assert timing["total_ms"] >= 0
+        assert timing["breakdown"] == {"retrieve": 100.0, "generate": 200.0}
 
 
 class TestIngestEndpoint:

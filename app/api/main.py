@@ -278,6 +278,10 @@ async def query_stream(request: QueryRequest):
 
         from app.agents.graph import run_rag_pipeline_stream_tokens
 
+        # Streamed state updates are partial and never carry start_time,
+        # so time the request here
+        request_start = time.time()
+
         try:
             final_state = None
             documents = []
@@ -319,14 +323,10 @@ async def query_stream(request: QueryRequest):
                 # Extract timing from the final state
                 for node_state in final_state.values():
                     if isinstance(node_state, dict):
-                        start_time = node_state.get("start_time")
                         timing_data = node_state.get("timing", {})
 
                         if timing_data:
-                            # Calculate total latency
-                            total_latency_ms = None
-                            if start_time:
-                                total_latency_ms = round((time.time() - start_time) * 1000, 2)
+                            total_latency_ms = round((time.time() - request_start) * 1000, 2)
 
                             # Format timing breakdown
                             latency_breakdown = {}

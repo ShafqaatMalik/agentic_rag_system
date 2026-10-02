@@ -7,10 +7,9 @@ name = "agentic-rag"
 version = "0.1.0"
 description = "A lightweight, production-ready Retrieval-Augmented Generation system with self-correction capabilities"
 readme = "README.md"
-license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Shafqaat Malik"}
 ]
 keywords = [
     "rag",
@@ -24,7 +23,6 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

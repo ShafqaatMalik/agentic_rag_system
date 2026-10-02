@@ -1,12 +1,12 @@
 # Agentic RAG System
 
-A production-ready Agentic RAG system that autonomously improves retrieval through multi-iteration query rewriting, validates generated answers using hallucination detection, and orchestrates complex decision flows via LangGraph’s state-based architecture—going beyond traditional linear RAG pipelines.The system supports streaming responses, includes comprehensive evaluation metrics, and is fully containerized with Docker for scalable deployment.
+A production-ready Agentic RAG system that autonomously improves retrieval through multi-iteration query rewriting, flags ungrounded answers with a hallucination check, and orchestrates complex decision flows via LangGraph’s state-based architecture—going beyond traditional linear RAG pipelines. The system supports streaming responses, includes comprehensive evaluation metrics, and is fully containerized with Docker for scalable deployment.
 
 ## Features
 
-- **Intelligent Query Routing**: Classifies queries and routes to appropriate processing paths
+- **Query Classification**: The router classifies queries as simple or complex; today both take the same retrieval path
 - **Self-Correcting Retrieval**: Grades document relevance and rewrites queries when needed (up to 3 attempts)
-- **Hallucination Detection**: Validates generated answers against retrieved context
+- **Hallucination Check**: Checks each answer against the retrieved context and flags ungrounded answers in the logs; it does not regenerate them
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
 - **RAG Evaluation**: Built-in metrics for faithfulness, relevance, precision, and recall
 - **Production Ready**: Comprehensive testing, Docker support, CI/CD pipeline, structured logging
@@ -51,21 +51,24 @@ See the [Quick Start](#quick-start) section below to run it locally with Docker.
 ## Workflow
 
 ```
-START → Router → Retriever → Grader → [Decision]
-                                         │
-                    ┌────────────────────┴────────────────────┐
-                    ▼                                         ▼
-              (docs relevant)                          (docs not relevant)
-                    │                                         │
-                    ▼                                         ▼
-               Generator                              Query Rewriter
-                    │                                         │
-                    ▼                                         └──→ back to Retriever
-           Hallucination Check                                    (max 3 times)
-                    │
-                    ▼
-                  END
+START → Router (simple/complex) → Retriever → Grader → [Decision]
+        both types go to retrieval                       │
+          ┌──────────────────────────┬───────────────────┴───────────────────┐
+          ▼                          ▼                                       ▼
+   (docs relevant)       (not relevant, rewrites left)       (not relevant, max rewrites reached)
+          │                          │                                       │
+          ▼                          ▼                                       ▼
+      Generator               Query Rewriter                       No Relevant Documents
+          │                          │                              (fallback message)
+          ▼                          └──→ back to Retriever                  │
+  Hallucination Check                     (up to 3 rewrites)                 ▼
+  (flags, does not regenerate)                                              END
+          │
+          ▼
+         END
 ```
+
+The router's simple/complex label is recorded in the state, but both labels currently route to the retriever. The hallucination check flags answers that aren't grounded in the retrieved context (logged as `is_grounded=False`); it does not regenerate them or change the response. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
 
 ## Quick Start
 
@@ -153,7 +156,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 122 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 123 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|
@@ -173,28 +176,46 @@ pytest --cov=app --cov-report=html
 ## Project Structure
 
 ```
-agentic-rag/
+agentic_rag_system/
+├── .github/workflows/ci.yml     # CI: lint, tests, coverage, Docker build, security scan
 ├── app/
-│   ├── agents/          # LangGraph workflow
-│   │   ├── graph.py     # Workflow definition
-│   │   ├── state.py     # State schema
-│   │   └── nodes.py     # Node functions
-│   ├── chains/          # LangChain components
-│   │   ├── router.py    # Query routing
-│   │   ├── grader.py    # Document grading
-│   │   ├── generator.py # Answer generation
-│   │   └── rewriter.py  # Query rewriting
-│   ├── retrieval/       # Vector store
-│   ├── api/             # FastAPI endpoints
-│   └── config.py        # Configuration
+│   ├── agents/
+│   │   ├── graph.py             # LangGraph workflow definition
+│   │   ├── nodes.py             # Node functions and conditional edges
+│   │   └── state.py             # Agent state schema
+│   ├── api/
+│   │   ├── main.py              # FastAPI app, endpoints, SSE streaming
+│   │   └── schemas.py           # Request/response models
+│   ├── chains/
+│   │   ├── generator.py         # Answer generation
+│   │   ├── grader.py            # Document relevance grading
+│   │   ├── hallucination_checker.py  # Groundedness and answer-relevance checks
+│   │   ├── rewriter.py          # Query rewriting
+│   │   └── router.py            # Query classification (simple/complex)
+│   ├── retrieval/
+│   │   └── vectorstore.py       # ChromaDB ingestion and retrieval
+│   ├── config.py                # Settings from environment variables
+│   ├── errors.py                # Custom exceptions and error handling
+│   ├── llm.py                   # Gemini LLM setup
+│   └── logging_config.py        # structlog configuration
+├── frontend/
+│   ├── index.html               # Chat UI served at /
+│   ├── app.js                   # Chat, upload, streaming and latency display
+│   └── styles.css
+├── docs/screenshots/            # README screenshots
+├── data/                        # Documents to ingest (mounted at /app/data)
+├── evaluation/eval_dataset.json # RAG evaluation dataset
 ├── tests/
-│   ├── unit/            # Unit tests
-│   ├── integration/     # Integration tests
-│   ├── e2e/             # End-to-end tests
-│   └── evaluation/      # RAG evaluation tests
-├── evaluation/          # Evaluation datasets
+│   ├── unit/                    # Chain-level tests
+│   ├── integration/             # Graph flow and rewrite-loop tests
+│   ├── e2e/                     # API and full-pipeline tests
+│   ├── evaluation/              # RAG metrics tests
+│   └── conftest.py              # Shared fixtures
+├── .env.example
 ├── docker-compose.yml
 ├── Dockerfile
+├── pyproject.toml               # Ruff, Black, isort, pytest, coverage config
+├── pytest.ini
 └── requirements.txt
 ```
 
@@ -204,9 +225,12 @@ agentic-rag/
 |----------|---------|-------------|
 | `GOOGLE_API_KEY` | Required | Google API key for Gemini |
 | `LLM_MODEL` | `gemini-flash-lite-latest` | LLM model to use |
+| `LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `EMBEDDING_MODEL` | `models/gemini-embedding-001` | Embedding model for ChromaDB |
+| `COLLECTION_NAME` | `documents` | ChromaDB collection name |
 | `RETRIEVAL_K` | `4` | Number of documents to retrieve |
 | `MAX_REWRITE_ITERATIONS` | `3` | Max query rewrite attempts |
+| `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ## RAG Evaluation
 
@@ -244,7 +268,3 @@ The project includes a comprehensive GitHub Actions pipeline:
 | **Testing** | pytest, ragas |
 | **CI/CD** | GitHub Actions |
 | **Containerization** | Docker |
-
-## License
-
-MIT
