@@ -14,6 +14,7 @@ from app.errors import (
     LLMError,
     handle_llm_error,
     is_rate_limit_error,
+    is_timeout_error,
     llm_retry,
     retry_wait,
     suggested_retry_wait,
@@ -58,6 +59,13 @@ class TestRetryWait:
     def test_does_not_retry_other_errors(self):
         assert retry_wait(ValueError("bad input")) is None
 
+    @pytest.mark.unit
+    def test_timeout_is_retried_like_503(self):
+        timeout = google_exceptions.DeadlineExceeded("Deadline Exceeded")
+        assert is_timeout_error(timeout)
+        assert is_timeout_error(TimeoutError())
+        assert retry_wait(timeout) == retry_wait(google_exceptions.ServiceUnavailable("busy"))
+
 
 class TestLLMRetry:
     """Tests for the llm_retry decorator."""
@@ -90,6 +98,16 @@ class TestLLMRetry:
         assert calls.call_count == 1
 
     @pytest.mark.unit
+    @patch("app.errors.DEFAULT_RETRY_WAIT", 0.01)
+    def test_retries_timeout_once_then_gives_up(self):
+        calls = MagicMock(side_effect=google_exceptions.DeadlineExceeded("Deadline Exceeded"))
+
+        with pytest.raises(google_exceptions.DeadlineExceeded):
+            llm_retry(calls)()
+
+        assert calls.call_count == 2
+
+    @pytest.mark.unit
     def test_does_not_retry_non_retryable(self):
         calls = MagicMock(side_effect=ValueError("bad input"))
 
@@ -116,6 +134,20 @@ class TestHandleLLMError:
         assert err.details["retry_after"] == pytest.approx(37.8)
         assert "rate limit" in err.message
         assert "38 seconds" in err.message
+
+    @pytest.mark.unit
+    def test_timeout_message(self):
+        @handle_llm_error
+        def call():
+            raise google_exceptions.DeadlineExceeded("Deadline Exceeded")
+
+        with pytest.raises(LLMError) as exc_info:
+            call()
+
+        err = exc_info.value
+        assert err.details["timed_out"] is True
+        assert err.details["rate_limited"] is False
+        assert "did not respond within 30 seconds" in err.message
 
     @pytest.mark.unit
     def test_other_failure_message(self):
@@ -219,10 +251,50 @@ class TestRateLimiter:
         get_rate_limiter.cache_clear()
 
     @pytest.mark.unit
-    @patch("app.llm.ChatGoogleGenerativeAI")
+    @patch("app.llm.TimeoutChatGoogleGenerativeAI")
     def test_get_llm_uses_shared_rate_limiter(self, mock_chat):
         from app.llm import get_llm, get_rate_limiter
 
         get_llm()
 
         assert mock_chat.call_args.kwargs["rate_limiter"] is get_rate_limiter()
+
+
+class TestRequestTimeout:
+    """Tests that the LLM client applies the timeout and owns no hidden retries."""
+
+    @pytest.mark.unit
+    def test_get_llm_sets_configured_timeout(self):
+        from app.config import get_settings
+        from app.llm import TimeoutChatGoogleGenerativeAI, get_llm
+
+        llm = get_llm()
+
+        assert isinstance(llm, TimeoutChatGoogleGenerativeAI)
+        assert llm.timeout == get_settings().llm_timeout_seconds == 30.0
+
+    @pytest.mark.unit
+    def test_request_kwargs_add_timeout_and_disable_client_retry(self):
+        from app.llm import get_llm
+
+        kwargs = get_llm()._request_kwargs({})
+
+        assert kwargs == {"timeout": 30.0, "retry": None}
+
+    @pytest.mark.unit
+    def test_timeout_reaches_client_and_is_attempted_once(self):
+        """A timed-out request is sent once with the timeout; the library doesn't retry it."""
+        from app.llm import get_llm, get_rate_limiter
+
+        get_rate_limiter.cache_clear()
+        llm = get_llm()
+        timeout = google_exceptions.DeadlineExceeded("Deadline Exceeded")
+
+        with patch.object(llm.client, "generate_content", side_effect=timeout) as mock_call:
+            with pytest.raises(google_exceptions.DeadlineExceeded):
+                llm.invoke("hello")
+
+        mock_call.assert_called_once()
+        assert mock_call.call_args.kwargs["timeout"] == 30.0
+        assert mock_call.call_args.kwargs["retry"] is None
+        get_rate_limiter.cache_clear()

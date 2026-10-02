@@ -15,6 +15,8 @@ import structlog
 from google.api_core import exceptions as google_exceptions
 from tenacity import before_sleep_log, retry, retry_if_exception, stop_after_attempt
 
+from app.config import get_settings
+
 logger = structlog.get_logger()
 
 
@@ -95,6 +97,10 @@ RATE_LIMIT_MESSAGE = (
     "The Gemini free-tier rate limit was reached, so no answer could be produced. "
     "Please try again in about {seconds} seconds."
 )
+TIMEOUT_MESSAGE = (
+    "Gemini did not respond within {seconds} seconds, so no answer could be produced. "
+    "Please try again."
+)
 LLM_FAILURE_MESSAGE = (
     "The language model request failed, so no answer could be produced. Please try again."
 )
@@ -124,24 +130,33 @@ def handle_llm_error(func):
 def to_llm_error(error: Exception, function: str) -> LLMError:
     """Log an LLM failure and wrap it in an LLMError with a user-facing message."""
     rate_limited = is_rate_limit_error(error)
+    timed_out = is_timeout_error(error)
     retry_after = suggested_retry_wait(error) if rate_limited else None
 
     logger.error(
         "LLM operation failed",
         function=function,
         rate_limited=rate_limited,
+        timed_out=timed_out,
         retry_after=retry_after,
         error=str(error)[:300],
     )
 
     if rate_limited:
         message = RATE_LIMIT_MESSAGE.format(seconds=round(retry_after or DEFAULT_RETRY_WAIT))
+    elif timed_out:
+        message = TIMEOUT_MESSAGE.format(seconds=round(get_settings().llm_timeout_seconds))
     else:
         message = LLM_FAILURE_MESSAGE
 
     return LLMError(
         message=message,
-        details={"function": function, "rate_limited": rate_limited, "retry_after": retry_after},
+        details={
+            "function": function,
+            "rate_limited": rate_limited,
+            "timed_out": timed_out,
+            "retry_after": retry_after,
+        },
         original_error=error,
     )
 
@@ -191,6 +206,11 @@ def is_rate_limit_error(error: BaseException) -> bool:
     return isinstance(error, google_exceptions.ResourceExhausted) or "429" in str(error)[:100]
 
 
+def is_timeout_error(error: BaseException) -> bool:
+    """Whether the request hit the client-side timeout (LLM_TIMEOUT_SECONDS)."""
+    return isinstance(error, google_exceptions.DeadlineExceeded | TimeoutError)
+
+
 def suggested_retry_wait(error: BaseException) -> float | None:
     """The wait the server suggested in a 429 response, in seconds, if any."""
     text = str(error)
@@ -202,11 +222,16 @@ def retry_wait(error: BaseException) -> float | None:
     """
     How long to wait before retrying an LLM error, or None to not retry.
 
-    Rate limits (429) and unavailability (503) are retried after the server's
-    suggested wait. If the server asks for more than MAX_RETRY_WAIT, the call
-    fails fast instead of waiting for a retry that would also be rejected.
+    Rate limits (429), unavailability (503) and timeouts are retried after the
+    server's suggested wait, or DEFAULT_RETRY_WAIT if there is none. If the server
+    asks for more than MAX_RETRY_WAIT, the call fails fast instead of waiting for a
+    retry that would also be rejected.
     """
-    if not (is_rate_limit_error(error) or isinstance(error, google_exceptions.ServiceUnavailable)):
+    if not (
+        is_rate_limit_error(error)
+        or is_timeout_error(error)
+        or isinstance(error, google_exceptions.ServiceUnavailable)
+    ):
         return None
     wait = suggested_retry_wait(error)
     if wait is None:
@@ -218,7 +243,7 @@ def _wait_for_server(retry_state) -> float:
     return retry_wait(retry_state.outcome.exception()) or 0.0
 
 
-# Retry LLM calls once, honouring the server's suggested wait (at most 40 s)
+# Retry LLM calls once (429, 503 or timeout), honouring the server's suggested wait (max 40 s)
 llm_retry = retry(
     stop=stop_after_attempt(2),
     wait=_wait_for_server,

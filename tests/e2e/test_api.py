@@ -176,12 +176,22 @@ class TestQueryErrors:
     """Tests that pipeline failures are reported as errors, never as answers."""
 
     @staticmethod
-    def llm_error(rate_limited, retry_after=None):
+    def llm_error(rate_limited, retry_after=None, timed_out=False):
         from app.errors import LLMError
 
+        if rate_limited:
+            message = "Rate limit message"
+        elif timed_out:
+            message = "Timeout message"
+        else:
+            message = "LLM failure message"
         return LLMError(
-            message="Rate limit message" if rate_limited else "LLM failure message",
-            details={"rate_limited": rate_limited, "retry_after": retry_after},
+            message=message,
+            details={
+                "rate_limited": rate_limited,
+                "timed_out": timed_out,
+                "retry_after": retry_after,
+            },
         )
 
     @pytest.mark.e2e
@@ -198,6 +208,41 @@ class TestQueryErrors:
         assert data["status"] == "error"
         assert data["answer"] == "Rate limit message"
         assert data["sources"] == []
+
+    @pytest.mark.e2e
+    @patch("app.api.main.run_rag_pipeline")
+    def test_query_timeout(self, mock_pipeline, client):
+        """Test a timed-out LLM call returns 504 and status error."""
+        mock_pipeline.side_effect = self.llm_error(rate_limited=False, timed_out=True)
+
+        response = client.post("/query", json={"query": "Test"})
+
+        assert response.status_code == 504
+        data = response.json()
+        assert data["status"] == "error"
+        assert data["answer"] == "Timeout message"
+        assert data["sources"] == []
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_stream_timeout_error_event(self, mock_stream, client):
+        """Test a timed-out LLM call ends the stream with the timeout message."""
+        error = self.llm_error(rate_limited=False, timed_out=True)
+
+        async def failing_stream(query):
+            raise error
+            yield  # pragma: no cover
+
+        mock_stream.side_effect = failing_stream
+
+        response = client.post("/query/stream", json={"query": "Test"})
+
+        events = [
+            json.loads(line[len("data:") :])
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+        assert events == [{"error": "Timeout message"}]
 
     @pytest.mark.e2e
     @patch("app.api.main.run_rag_pipeline")

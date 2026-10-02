@@ -204,12 +204,15 @@ def describe_query_failure(error: Exception) -> tuple[str, int, dict[str, str]]:
     """
     Map a pipeline failure to a user-facing message, HTTP status and headers.
 
-    Rate limits get 429 with Retry-After; other LLM failures 502; anything else 500.
+    Rate limits get 429 with Retry-After; timeouts 504; other LLM failures 502;
+    anything else 500.
     """
     if isinstance(error, LLMError):
         if error.details.get("rate_limited"):
             retry_after = error.details.get("retry_after") or DEFAULT_RETRY_WAIT
             return error.message, 429, {"Retry-After": str(math.ceil(retry_after))}
+        if error.details.get("timed_out"):
+            return error.message, 504, {}
         return error.message, 502, {}
     return GENERIC_FAILURE_MESSAGE, 500, {}
 

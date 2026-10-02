@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # 15 requests/min per model; a burst of 3 at 0.2/s never exceeds that in any minute.
     llm_requests_per_second: float = Field(default=0.2, env="LLM_REQUESTS_PER_SECOND")
     llm_max_burst: int = Field(default=3, env="LLM_MAX_BURST")
+    # Per-request timeout; a timed-out call is retried once, like a 503
+    llm_timeout_seconds: float = Field(default=30.0, env="LLM_TIMEOUT_SECONDS")
 
     # Vector Store Configuration
     chroma_persist_directory: str = Field(default="./chroma_db", env="CHROMA_PERSIST_DIR")
