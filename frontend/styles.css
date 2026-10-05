@@ -957,6 +957,28 @@ body {
 }
 
 /* Timing Section */
+/* Self-correction notes under an answer */
+.answer-note,
+.answer-caveat {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.answer-note {
+    color: var(--text-secondary);
+    border-left: 3px solid var(--accent-secondary);
+    background: rgba(124, 58, 237, 0.08);
+}
+
+.answer-caveat {
+    color: var(--warning);
+    border-left: 3px solid var(--warning);
+    background: rgba(245, 158, 11, 0.1);
+}
+
 .timing-section {
     margin-top: 1rem;
     padding-top: 1rem;

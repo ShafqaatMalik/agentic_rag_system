@@ -29,6 +29,11 @@ class AgentState(TypedDict):
     generation: str | None
     # Hallucination check verdict; None until the check has run
     is_grounded: bool | None
+    # Self-correction: the checker's issues, regenerations done, and the caveat
+    # attached when an answer is still ungrounded after regenerating
+    hallucination_issues: str | None
+    regeneration_count: int
+    caveat: str | None
 
     # Control flow
     iteration_count: int
@@ -64,6 +69,9 @@ def create_initial_state(query: str) -> AgentState:
         documents_relevant=False,
         generation=None,
         is_grounded=None,
+        hallucination_issues=None,
+        regeneration_count=0,
+        caveat=None,
         iteration_count=0,
         query_type=None,
         sub_queries=[],

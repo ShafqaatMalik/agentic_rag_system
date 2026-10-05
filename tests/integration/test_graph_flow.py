@@ -221,3 +221,43 @@ class TestGraphStatePersistence:
 
         assert state["iteration_count"] == 3
         assert len(state["rewrite_history"]) == 3
+
+
+class TestSelfCorrectionEdges:
+    """Tests for the decision after a hallucination check."""
+
+    @pytest.mark.integration
+    def test_grounded_answer_ends(self):
+        from app.agents.nodes import should_regenerate
+
+        assert should_regenerate({"is_grounded": True, "regeneration_count": 0}) == "end"
+        assert should_regenerate({"is_grounded": True, "regeneration_count": 1}) == "end"
+
+    @pytest.mark.integration
+    def test_first_ungrounded_answer_is_regenerated(self):
+        from app.agents.nodes import should_regenerate
+
+        assert should_regenerate({"is_grounded": False, "regeneration_count": 0}) == "regenerate"
+
+    @pytest.mark.integration
+    def test_still_ungrounded_after_regenerating_is_flagged(self):
+        from app.agents.nodes import should_regenerate
+
+        assert (
+            should_regenerate({"is_grounded": False, "regeneration_count": 1}) == "flag_ungrounded"
+        )
+
+    @pytest.mark.integration
+    def test_flag_node_sets_the_caveat(self):
+        from app.agents.nodes import UNGROUNDED_CAVEAT, flag_ungrounded_node
+
+        update = flag_ungrounded_node(create_initial_state("q"))
+
+        assert update["caveat"] == UNGROUNDED_CAVEAT
+
+    @pytest.mark.integration
+    def test_graph_has_self_correction_nodes(self):
+        graph = create_rag_graph()
+
+        assert "regenerate" in graph.nodes
+        assert "flag_ungrounded" in graph.nodes

@@ -53,6 +53,26 @@ Question: {query}
 
 Provide a helpful answer based on the context above."""
 
+STRICT_GENERATOR_SYSTEM_PROMPT = """You answer questions strictly from the provided context.
+
+A reviewer checked a previous answer against the context and found claims it does not support.
+Write a new answer that fixes this:
+- State only facts that the context directly supports; stay close to its wording
+- Do not add background knowledge, examples, numbers or conclusions that are not in the context
+- If the context covers only part of the question, answer that part and say which part the documents don't cover
+- Keep it concise and in plain language
+- Never include formulas, variable names or code"""
+
+STRICT_GENERATOR_HUMAN_PROMPT = """Context:
+{context}
+
+Question: {query}
+
+The reviewer found these problems with the previous answer:
+{issues}
+
+Write the corrected answer using only the context above."""
+
 NO_CONTEXT_PROMPT = """Question: {query}
 
 I don't have any relevant documents to answer this question. Please let the user know that no relevant information was found in the knowledge base."""
@@ -106,6 +126,19 @@ def get_generator_chain():
     return chain
 
 
+def get_strict_generator_chain():
+    """
+    Create the strict grounding chain used to regenerate an ungrounded answer.
+
+    Returns:
+        Chain that outputs answer string
+    """
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", STRICT_GENERATOR_SYSTEM_PROMPT), ("human", STRICT_GENERATOR_HUMAN_PROMPT)]
+    )
+    return prompt | get_llm() | StrOutputParser()
+
+
 def get_no_context_chain():
     """
     Create chain for when no relevant documents are found.
@@ -152,6 +185,31 @@ def generate_answer(query: str, documents: list[Document]) -> GenerationResult:
     )
 
     return GenerationResult(answer=answer, sources=sources, has_answer=True)
+
+
+@handle_llm_error
+@llm_retry
+def generate_strict_answer(query: str, documents: list[Document], issues: str) -> str:
+    """
+    Regenerate an answer that failed the hallucination check, with a stricter prompt.
+
+    Args:
+        query: The user's input query
+        documents: The documents the answer must be grounded in
+        issues: The hallucination checker's description of the unsupported claims
+
+    Returns:
+        The regenerated answer
+    """
+    answer = get_strict_generator_chain().invoke(
+        {
+            "query": query,
+            "context": format_documents(documents),
+            "issues": issues or "Some claims are not supported by the context.",
+        }
+    )
+    logger.info("Answer regenerated with strict grounding", answer_length=len(answer))
+    return answer
 
 
 # Streaming version for API

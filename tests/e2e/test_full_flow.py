@@ -411,6 +411,165 @@ class TestStreamingFlow:
         assert events[-1]["type"] == "done"
 
 
+class TestSelfCorrection:
+    """An ungrounded answer is regenerated once; if still ungrounded it gets a caveat."""
+
+    DOC = Document(page_content="ScaNN uses anisotropic quantization.", metadata={})
+
+    @staticmethod
+    def verdicts(*grounded):
+        from app.chains.hallucination_checker import HallucinationCheck
+
+        return [
+            HallucinationCheck(
+                is_grounded="yes" if g else "no",
+                confidence="high",
+                issues="None" if g else "The claim about pricing is unsupported",
+            )
+            for g in grounded
+        ]
+
+    def setup(self, mock_vectorstore, mock_grade, mock_generate):
+        from app.chains.generator import GenerationResult
+        from app.chains.grader import GradingResult
+
+        mock_vectorstore.return_value.vectorstore.similarity_search.return_value = [self.DOC]
+        mock_grade.return_value = GradingResult(
+            relevant_docs=[self.DOC], irrelevant_count=0, has_relevant_docs=True
+        )
+        mock_generate.return_value = GenerationResult(
+            answer="ScaNN costs $5 per month.", sources=[], has_answer=True
+        )
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.agents.nodes.generate_answer")
+    @patch("app.agents.nodes.generate_strict_answer")
+    @patch("app.agents.nodes.check_hallucination")
+    async def test_regeneration_fixes_the_answer(
+        self, mock_check, mock_strict, mock_generate, mock_grade, mock_vectorstore, router
+    ):
+        self.setup(mock_vectorstore, mock_grade, mock_generate)
+        mock_check.side_effect = self.verdicts(False, True)
+        mock_strict.return_value = "ScaNN uses anisotropic quantization."
+
+        result = await run_rag_pipeline("How does ScaNN work?")
+
+        assert result["generation"] == "ScaNN uses anisotropic quantization."
+        assert result["is_grounded"] is True
+        assert result["regeneration_count"] == 1
+        assert result["caveat"] is None
+        mock_strict.assert_called_once_with(
+            "How does ScaNN work?", [self.DOC], "The claim about pricing is unsupported"
+        )
+        # The re-check sees the regenerated answer
+        assert mock_check.call_args_list[1].args[0] == "ScaNN uses anisotropic quantization."
+        # Budget with regeneration: route, grade, generate, check, regenerate, check = 6
+        llm_calls = [router, mock_grade, mock_generate, mock_check, mock_strict]
+        assert [m.call_count for m in llm_calls] == [1, 1, 1, 2, 1]
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.agents.nodes.generate_answer")
+    @patch("app.agents.nodes.generate_strict_answer")
+    @patch("app.agents.nodes.check_hallucination")
+    async def test_still_ungrounded_gets_a_caveat(
+        self, mock_check, mock_strict, mock_generate, mock_grade, mock_vectorstore, router
+    ):
+        from app.agents.nodes import UNGROUNDED_CAVEAT
+
+        self.setup(mock_vectorstore, mock_grade, mock_generate)
+        mock_check.side_effect = self.verdicts(False, False)
+        mock_strict.return_value = "Still unsupported answer."
+
+        result = await run_rag_pipeline("How does ScaNN work?")
+
+        assert result["generation"] == "Still unsupported answer."
+        assert result["is_grounded"] is False
+        assert result["caveat"] == UNGROUNDED_CAVEAT
+        # Regenerated once only, then flagged
+        assert mock_strict.call_count == 1
+        assert mock_check.call_count == 2
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.agents.nodes.generate_answer")
+    @patch("app.agents.nodes.generate_strict_answer")
+    @patch("app.agents.nodes.check_hallucination")
+    async def test_failed_regeneration_fails_closed(
+        self, mock_check, mock_strict, mock_generate, mock_grade, mock_vectorstore, router
+    ):
+        from app.errors import LLMError
+
+        self.setup(mock_vectorstore, mock_grade, mock_generate)
+        mock_check.side_effect = self.verdicts(False)
+        mock_strict.side_effect = LLMError("Generation failed")
+
+        with pytest.raises(LLMError):
+            await run_rag_pipeline("How does ScaNN work?")
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.agents.nodes.generate_answer")
+    @patch("app.agents.nodes.generate_strict_answer")
+    @patch("app.agents.nodes.check_hallucination")
+    async def test_failed_recheck_fails_closed(
+        self, mock_check, mock_strict, mock_generate, mock_grade, mock_vectorstore, router
+    ):
+        from app.errors import LLMError
+
+        self.setup(mock_vectorstore, mock_grade, mock_generate)
+        mock_check.side_effect = [*self.verdicts(False), LLMError("Check failed")]
+        mock_strict.return_value = "Regenerated."
+
+        with pytest.raises(LLMError):
+            await run_rag_pipeline("How does ScaNN work?")
+
+    @pytest.mark.e2e
+    @pytest.mark.asyncio
+    @patch("app.agents.nodes.get_vectorstore_manager")
+    @patch("app.agents.nodes.grade_documents")
+    @patch("app.chains.generator.generate_answer_stream")
+    @patch("app.agents.nodes.generate_strict_answer")
+    @patch("app.agents.nodes.check_hallucination")
+    async def test_stream_emits_regeneration_after_the_tokens(
+        self, mock_check, mock_strict, mock_stream, mock_grade, mock_vectorstore, router
+    ):
+        from app.chains.grader import GradingResult
+
+        mock_vectorstore.return_value.vectorstore.similarity_search.return_value = [self.DOC]
+        mock_grade.return_value = GradingResult(
+            relevant_docs=[self.DOC], irrelevant_count=0, has_relevant_docs=True
+        )
+
+        async def fake_stream(query, documents):
+            yield "First answer."
+
+        mock_stream.side_effect = fake_stream
+        mock_check.side_effect = self.verdicts(False, True)
+        mock_strict.return_value = "Grounded answer."
+
+        events = [u async for u in run_rag_pipeline_stream_tokens("How does ScaNN work?")]
+
+        kinds = [
+            u["type"] if u["type"] != "state_update" else next(iter(u["data"])) for u in events
+        ]
+        token_at, regen_at = kinds.index("token"), kinds.index("regenerate")
+        assert token_at < regen_at
+        assert events[regen_at]["data"]["regenerate"]["generation"] == "Grounded answer."
+        # The first check saw the streamed answer
+        assert mock_check.call_args_list[0].args[0] == "First answer."
+        assert kinds[-1] == "done"
+
+
 class TestEmptyQueryHandling:
     """Tests for edge cases with query input."""
 

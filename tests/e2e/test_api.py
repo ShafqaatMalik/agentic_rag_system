@@ -232,7 +232,103 @@ class TestStreamDoneEvent:
             "is_grounded": False,
             "final_query": "rewritten",
             "sub_queries": ["s1", "s2"],
+            "revised": False,
+            "caveat": None,
         }
+
+
+class TestSelfCorrectionResponses:
+    """Revised answers and caveats in /query and the stream."""
+
+    @staticmethod
+    def stream_events(response):
+        return [
+            json.loads(line[len("data:") :])
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_stream_sends_revised_answer_then_caveat(self, mock_stream, client):
+        """Test a regeneration sends revised_answer, and done carries revised and caveat."""
+
+        async def fake_stream(query):
+            yield {"type": "token", "data": "First answer."}
+            yield {"type": "state_update", "data": {"check_hallucination": {"is_grounded": False}}}
+            yield {"type": "state_update", "data": {"regenerate": {"generation": "Revised."}}}
+            yield {"type": "state_update", "data": {"check_hallucination": {"is_grounded": False}}}
+            yield {"type": "state_update", "data": {"flag_ungrounded": {"caveat": "Unverified."}}}
+            yield {"type": "done", "data": {"flag_ungrounded": {"caveat": "Unverified."}}}
+
+        mock_stream.side_effect = fake_stream
+
+        events = self.stream_events(client.post("/query/stream", json={"query": "q"}))
+
+        assert events[0] == {"content": "First answer."}
+        assert events[1] == {"revised_answer": "Revised."}
+        done = events[-1]
+        assert done["status"] == "complete"
+        assert done["revised"] is True
+        assert done["caveat"] == "Unverified."
+        assert done["is_grounded"] is False
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_stream_without_regeneration_has_no_revised_event(self, mock_stream, client):
+        async def fake_stream(query):
+            yield {"type": "token", "data": "Answer."}
+            yield {"type": "state_update", "data": {"check_hallucination": {"is_grounded": True}}}
+            yield {"type": "done", "data": {"check_hallucination": {"is_grounded": True}}}
+
+        mock_stream.side_effect = fake_stream
+
+        events = self.stream_events(client.post("/query/stream", json={"query": "q"}))
+
+        assert not any("revised_answer" in e for e in events)
+        assert events[-1]["revised"] is False
+        assert events[-1]["caveat"] is None
+
+    @pytest.mark.e2e
+    @patch("app.agents.graph.run_rag_pipeline_stream_tokens")
+    def test_error_after_first_answer_sends_error_without_sources(self, mock_stream, client):
+        """Test a failed regeneration or re-check ends the stream with an error event."""
+        from langchain_core.documents import Document
+
+        from app.errors import LLMError
+
+        async def fake_stream(query):
+            doc = Document(page_content="chunk", metadata={"source": "w.pdf"})
+            yield {"type": "state_update", "data": {"grade": {"documents": [doc]}}}
+            yield {"type": "token", "data": "First answer."}
+            raise LLMError(message="Regeneration failed message", details={})
+
+        mock_stream.side_effect = fake_stream
+
+        events = self.stream_events(client.post("/query/stream", json={"query": "q"}))
+
+        assert events == [{"content": "First answer."}, {"error": "Regeneration failed message"}]
+
+    @pytest.mark.e2e
+    @patch("app.api.main.run_rag_pipeline")
+    def test_query_returns_revised_and_caveat(self, mock_pipeline, client):
+        mock_pipeline.return_value = {
+            "query": "q",
+            "documents": [],
+            "documents_relevant": True,
+            "generation": "Regenerated answer.",
+            "iteration_count": 0,
+            "is_grounded": False,
+            "regeneration_count": 1,
+            "caveat": "Unverified.",
+        }
+
+        data = client.post("/query", json={"query": "q"}).json()
+
+        assert data["answer"] == "Regenerated answer."
+        assert data["revised"] is True
+        assert data["caveat"] == "Unverified."
+        assert data["is_grounded"] is False
 
 
 class TestQueryErrors:

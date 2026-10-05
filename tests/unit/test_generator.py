@@ -182,3 +182,69 @@ class TestGeneratorChain:
             generate_answer("Test query", docs)
 
         assert "no answer could be produced" in exc_info.value.message
+
+
+class TestStrictRegeneration:
+    """Tests for regenerating an ungrounded answer with the strict grounding prompt."""
+
+    @pytest.mark.unit
+    def test_strict_prompt_demands_grounding(self):
+        from app.chains.generator import STRICT_GENERATOR_SYSTEM_PROMPT
+
+        prompt = STRICT_GENERATOR_SYSTEM_PROMPT.lower()
+        assert "only facts that the context directly supports" in prompt
+        assert "don't cover" in prompt
+        assert "synthesize" not in prompt
+
+    @pytest.mark.unit
+    @patch("app.chains.generator.get_strict_generator_chain")
+    def test_passes_the_checker_issues(self, mock_get_chain):
+        from app.chains.generator import generate_strict_answer
+
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = "Strictly grounded answer."
+        mock_get_chain.return_value = mock_chain
+        docs = [Document(page_content="Context text", metadata={"source": "w.pdf"})]
+
+        answer = generate_strict_answer("Q?", docs, "Claims about pricing are unsupported")
+
+        assert answer == "Strictly grounded answer."
+        inputs = mock_chain.invoke.call_args.args[0]
+        assert inputs["issues"] == "Claims about pricing are unsupported"
+        assert inputs["query"] == "Q?"
+        assert "Context text" in inputs["context"]
+        mock_chain.invoke.assert_called_once()
+
+    @pytest.mark.unit
+    @patch("app.chains.generator.get_llm")
+    def test_issues_reach_the_model_prompt(self, mock_get_llm):
+        from langchain_core.messages import AIMessage
+        from langchain_core.runnables import RunnableLambda
+
+        from app.chains.generator import generate_strict_answer
+
+        seen = []
+
+        def respond(prompt_value):
+            seen.append(prompt_value.to_messages())
+            return AIMessage(content="ok")
+
+        mock_get_llm.return_value = RunnableLambda(respond)
+
+        generate_strict_answer("Q?", [Document(page_content="C")], "The year 2019 is unsupported")
+
+        system, human = seen[0]
+        assert "directly supports" in system.content
+        assert "The year 2019 is unsupported" in human.content
+
+    @pytest.mark.unit
+    @patch("app.chains.generator.get_strict_generator_chain")
+    def test_fails_closed(self, mock_get_chain):
+        from app.chains.generator import generate_strict_answer
+
+        mock_chain = MagicMock()
+        mock_chain.invoke.side_effect = Exception("LLM error")
+        mock_get_chain.return_value = mock_chain
+
+        with pytest.raises(LLMError):
+            generate_strict_answer("Q?", [Document(page_content="C")], "issues")

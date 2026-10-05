@@ -15,14 +15,17 @@ from app.agents.nodes import (
     after_rewrite,
     check_hallucination_node,
     decompose_query_node,
+    flag_ungrounded_node,
     generate_answer_node,
     grade_documents_node,
     no_relevant_docs_node,
+    regenerate_answer_node,
     retrieve_documents_node,
     retrieve_multi_node,
     rewrite_query_node,
     route_by_query_type,
     route_query_node,
+    should_regenerate,
     should_rewrite_or_generate,
 )
 from app.agents.state import AgentState, create_initial_state
@@ -39,7 +42,9 @@ def create_rag_graph() -> StateGraph:
     2. Simple: retrieve documents. Complex: decompose into 2-3 sub-queries,
        retrieve for each, merge and de-duplicate
     3. Grade documents for relevance (one batched call)
-    4. If relevant → Generate answer → Check hallucination → END
+    4. If relevant → Generate answer → Check hallucination → END; if ungrounded,
+       regenerate once with a stricter prompt and re-check; still ungrounded →
+       return it with a caveat
     5. If not relevant → Rewrite query → back to the start of its path (max 3 times)
     6. If max iterations → Return fallback message → END
 
@@ -58,6 +63,8 @@ def create_rag_graph() -> StateGraph:
     workflow.add_node("generate", generate_answer_node)
     workflow.add_node("rewrite", rewrite_query_node)
     workflow.add_node("check_hallucination", check_hallucination_node)
+    workflow.add_node("regenerate", regenerate_answer_node)
+    workflow.add_node("flag_ungrounded", flag_ungrounded_node)
     workflow.add_node("no_relevant_docs", no_relevant_docs_node)
 
     # --- Define Edges ---
@@ -85,8 +92,14 @@ def create_rag_graph() -> StateGraph:
     # Generate → Check Hallucination
     workflow.add_edge("generate", "check_hallucination")
 
-    # Check Hallucination → END
-    workflow.add_edge("check_hallucination", END)
+    # Check Hallucination → END, or regenerate once and re-check, or flag
+    workflow.add_conditional_edges(
+        "check_hallucination",
+        should_regenerate,
+        {"end": END, "regenerate": "regenerate", "flag_ungrounded": "flag_ungrounded"},
+    )
+    workflow.add_edge("regenerate", "check_hallucination")
+    workflow.add_edge("flag_ungrounded", END)
 
     # Rewrite → back to the start of the query's path (loop)
     workflow.add_conditional_edges(
@@ -257,7 +270,7 @@ async def run_rag_pipeline_stream_tokens(query: str):
         timing = {**state.get("timing", {}), "generate": time.time() - start}
         graph.update_state(config, {"generation": answer, "timing": timing}, as_node="generate")
 
-        # Resume: check_hallucination → END
+        # Resume: check_hallucination (→ regenerate → check → flag) → END
         async for state_update in graph.astream(None, config):
             final_state = state_update
             yield {"type": "state_update", "data": state_update}

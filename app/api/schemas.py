@@ -84,6 +84,10 @@ class QueryResponse(BaseModel):
     sub_queries: list[str] = Field(
         default_factory=list, description="Complex path: sub-queries retrieved for"
     )
+    revised: bool = Field(False, description="The first answer was ungrounded and was regenerated")
+    caveat: str | None = Field(
+        None, description="Warning shown when the answer is still ungrounded after regenerating"
+    )
     latency_ms: float | None = Field(None, description="Total latency in milliseconds")
     latency_breakdown: dict | None = Field(None, description="Latency breakdown by component")
 
@@ -91,7 +95,7 @@ class QueryResponse(BaseModel):
 class StreamEvent(BaseModel):
     """Server-sent event for streaming responses."""
 
-    event: Literal["token", "source", "done", "error", "timing"]
+    event: Literal["token", "revised", "source", "done", "error", "timing"]
     data: str
 
 

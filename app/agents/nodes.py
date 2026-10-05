@@ -14,7 +14,7 @@ import structlog
 
 from app.agents.state import AgentState
 from app.chains.decomposer import decompose_query
-from app.chains.generator import generate_answer
+from app.chains.generator import generate_answer, generate_strict_answer
 from app.chains.grader import grade_documents
 from app.chains.hallucination_checker import check_hallucination
 from app.chains.rewriter import rewrite_query
@@ -23,6 +23,14 @@ from app.config import get_settings
 from app.retrieval.vectorstore import get_vectorstore_manager
 
 logger = structlog.get_logger()
+
+# An ungrounded answer is regenerated this many times before it is returned with a caveat
+MAX_REGENERATIONS = 1
+
+UNGROUNDED_CAVEAT = (
+    "This answer could not be fully verified against the source documents. "
+    "Check the cited sources before relying on it."
+)
 
 
 def time_node(node_name: str):
@@ -49,7 +57,16 @@ def time_node(node_name: str):
 
             # For nodes that may be called multiple times (retrieve, grade, generate, rewrite)
             # Track them with iteration suffixes
-            repeatable = ["retrieve", "retrieve_multi", "decompose", "grade", "generate", "rewrite"]
+            repeatable = [
+                "retrieve",
+                "retrieve_multi",
+                "decompose",
+                "grade",
+                "generate",
+                "rewrite",
+                "check_hallucination",
+                "regenerate",
+            ]
             if node_name in timing and node_name in repeatable:
                 iteration = state.get("iteration_count", 0)
                 timing[f"{node_name}_{iteration}"] = duration
@@ -268,7 +285,7 @@ def check_hallucination_node(state: AgentState) -> dict[str, Any]:
         state: Current agent state
 
     Returns:
-        State update with is_grounded (the answer is flagged, not regenerated)
+        State update with is_grounded and the checker's issues
     """
     logger.info("Node: check_hallucination")
 
@@ -281,7 +298,43 @@ def check_hallucination_node(state: AgentState) -> dict[str, Any]:
         issues=result.issues[:50] if result.issues != "None" else "None",
     )
 
-    return {"is_grounded": result.is_grounded == "yes"}
+    return {"is_grounded": result.is_grounded == "yes", "hallucination_issues": result.issues}
+
+
+@time_node("regenerate")
+def regenerate_answer_node(state: AgentState) -> dict[str, Any]:
+    """
+    Node: Regenerate an ungrounded answer with a stricter grounding prompt.
+
+    Args:
+        state: Current agent state
+
+    Returns:
+        State update with the regenerated answer and the regeneration count
+    """
+    logger.info("Node: regenerate_answer", issues=(state.get("hallucination_issues") or "")[:80])
+
+    answer = generate_strict_answer(
+        state["query"], state["documents"], state.get("hallucination_issues") or ""
+    )
+
+    return {"generation": answer, "regeneration_count": state.get("regeneration_count", 0) + 1}
+
+
+@time_node("flag_ungrounded")
+def flag_ungrounded_node(state: AgentState) -> dict[str, Any]:
+    """
+    Node: Attach a caveat to an answer that is still ungrounded after regenerating.
+
+    Args:
+        state: Current agent state
+
+    Returns:
+        State update with the caveat
+    """
+    logger.warning("Answer still ungrounded after regeneration; returning it with a caveat")
+
+    return {"caveat": UNGROUNDED_CAVEAT}
 
 
 @time_node("no_relevant_docs")
@@ -354,6 +407,26 @@ def route_by_query_type(state: AgentState) -> str:
 
     logger.info(f"Routing query type: {query_type} → {next_node}")
     return next_node
+
+
+def should_regenerate(state: AgentState) -> str:
+    """
+    Conditional edge: decide what follows a hallucination check.
+
+    Args:
+        state: Current agent state
+
+    Returns:
+        "end" if grounded, "regenerate" if ungrounded and not yet regenerated,
+        "flag_ungrounded" if still ungrounded after regenerating
+    """
+    if state.get("is_grounded"):
+        return "end"
+    if state.get("regeneration_count", 0) < MAX_REGENERATIONS:
+        logger.info("Decision: answer ungrounded → regenerate")
+        return "regenerate"
+    logger.info("Decision: still ungrounded after regeneration → flag")
+    return "flag_ungrounded"
 
 
 def after_rewrite(state: AgentState) -> str:

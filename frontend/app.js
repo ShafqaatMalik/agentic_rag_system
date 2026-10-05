@@ -295,6 +295,8 @@ class AgenticRAG {
                 const messageDiv = this.createMessageElement(msg.role, msg.content);
                 this.chatMessages.appendChild(messageDiv);
 
+                this.addAnswerNotes(messageDiv, msg.revised, msg.caveat);
+
                 // Add sources if available
                 if (msg.sources && msg.sources.length > 0) {
                     this.addSourcesToMessage(messageDiv, msg.sources);
@@ -490,48 +492,72 @@ class AgenticRAG {
         assistantMessageDiv.querySelector('.message-content').innerHTML += '<span class="cursor">|</span>';
         this.chatMessages.appendChild(assistantMessageDiv);
 
+        let revised = false;
+        let caveat = null;
+        let buffer = '';
+
+        const processLine = (line) => {
+            // Events are told apart by their JSON keys below, so the event: lines are skipped
+            if (line.startsWith('event:')) {
+                return;
+            }
+
+            if (line.startsWith('data:')) {
+                try {
+                    const data = JSON.parse(line.replace('data:', '').trim());
+
+                    // Source events also carry a content excerpt; only tokens extend the answer
+                    if (data.content && !data.source) {
+                        // Append token incrementally instead of replacing
+                        fullContent += data.content;
+                        this.updateMessageContent(assistantMessageDiv, fullContent);
+                    }
+
+                    if (data.source) {
+                        sources.push(data);
+                    }
+
+                    if (data.total_ms !== undefined) {
+                        timingData = data;
+                    }
+
+                    if (data.revised_answer !== undefined) {
+                        // The first answer failed the grounding check and was regenerated
+                        fullContent = data.revised_answer;
+                        revised = true;
+                        this.updateMessageContent(assistantMessageDiv, fullContent);
+                    }
+
+                    if (data.status === 'complete' && data.caveat) {
+                        caveat = data.caveat;
+                    }
+
+                    if (data.error) {
+                        // Replace any partial answer so the saved conversation shows the error too
+                        fullContent = 'Error: ' + data.error;
+                        this.updateMessageContent(assistantMessageDiv, fullContent);
+                    }
+                } catch (e) {
+                    // Ignore lines that aren't valid JSON
+                }
+            }
+        };
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
-
-            for (const line of lines) {
-                if (line.startsWith('event:')) {
-                    const event = line.replace('event:', '').trim();
-                    continue;
-                }
-
-                if (line.startsWith('data:')) {
-                    try {
-                        const data = JSON.parse(line.replace('data:', '').trim());
-
-                        if (data.content) {
-                            // Append token incrementally instead of replacing
-                            fullContent += data.content;
-                            this.updateMessageContent(assistantMessageDiv, fullContent);
-                        }
-
-                        if (data.source) {
-                            sources.push(data);
-                        }
-
-                        if (data.total_ms !== undefined) {
-                            timingData = data;
-                        }
-
-                        if (data.error) {
-                            // Replace any partial answer so the saved conversation shows the error too
-                            fullContent = 'Error: ' + data.error;
-                            this.updateMessageContent(assistantMessageDiv, fullContent);
-                        }
-                    } catch (e) {
-                        // Ignore parse errors for incomplete chunks
-                    }
-                }
-            }
+            // An SSE line can be split across reads: keep the incomplete tail for the next read
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            lines.forEach(processLine);
         }
+        buffer += decoder.decode();
+        buffer.split('\n').forEach(processLine);
+
+        // Note a revised answer, and warn if it is still unverified
+        this.addAnswerNotes(assistantMessageDiv, revised, caveat);
 
         // Add sources if available
         if (sources.length > 0) {
@@ -551,6 +577,8 @@ class AgenticRAG {
                 content: fullContent,
                 sources: sources.length > 0 ? sources : null,
                 timing: timingData || null,
+                revised: revised,
+                caveat: caveat,
                 timestamp: new Date().toISOString()
             });
             conversation.updatedAt = new Date().toISOString();
@@ -627,6 +655,22 @@ class AgenticRAG {
         `;
 
         contentDiv.insertAdjacentHTML('beforeend', sourcesHtml);
+    }
+
+    addAnswerNotes(messageDiv, revised, caveat) {
+        const contentDiv = messageDiv.querySelector('.message-content');
+        if (revised) {
+            const note = document.createElement('div');
+            note.className = 'answer-note';
+            note.textContent = 'Revised for grounding: the first answer included claims the sources did not support.';
+            contentDiv.appendChild(note);
+        }
+        if (caveat) {
+            const banner = document.createElement('div');
+            banner.className = 'answer-caveat';
+            banner.textContent = caveat;
+            contentDiv.appendChild(banner);
+        }
     }
 
     addTimingToMessage(messageDiv, timingData) {

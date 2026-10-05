@@ -6,7 +6,7 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 
 - **Query Routing**: A router classifies each query as simple or complex. Complex questions are decomposed into 2–3 sub-queries, each retrieved separately; the results are merged, de-duplicated and graded together
 - **Self-Correcting Retrieval**: Grades all retrieved chunks for relevance in one LLM call and rewrites the query when needed (up to 3 attempts)
-- **Hallucination Check**: Checks each answer against the retrieved context and flags ungrounded answers (`is_grounded` in the API response); it does not regenerate them
+- **Self-Correcting Answers**: Checks each answer against the retrieved context. An ungrounded answer is regenerated once with a stricter grounding prompt and checked again; if it is still ungrounded it is returned with `is_grounded=false` and a visible caveat
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
 - **RAG Evaluation**: Built-in metrics for faithfulness, relevance, precision, and recall
 - **Production Ready**: Comprehensive testing, Docker support, CI/CD pipeline, structured logging
@@ -67,28 +67,38 @@ START → Router (simple or complex)
           │                             │                       (fallback message)
           ▼                             └──→ back to the start of its path    │
   Hallucination Check                        (simple: Retriever,              ▼
-  (flags, does not regenerate)                complex: Decomposer;           END
+  (with self-correction, below)               complex: Decomposer;           END
           │                                   up to 3 rewrites)
           ▼
          END
 ```
 
+Self-correction after generation:
+
+```
+Generator → Hallucination Check
+              ├── grounded ──────────────────────────────────────────→ END
+              └── ungrounded → Regenerate (strict grounding prompt) → Hallucination Check
+                                                                        ├── grounded ──────────→ END (revised)
+                                                                        └── still ungrounded ──→ END (is_grounded=false + caveat)
+```
+
 The router sends simple questions to a single retrieval. Complex questions are decomposed into 2–3 self-contained sub-queries; each is retrieved separately (k=4), and the results are merged and de-duplicated (up to 12 chunks). The grader judges all chunks in one call; on the complex path it also sees the sub-queries, and a chunk that helps answer any one of them counts as relevant. A rewritten query goes back to the start of its path, so complex questions are decomposed again.
 
-The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context. It reports the verdict as `is_grounded` in the `/query` response and the stream's `done` event, and does not regenerate the answer. Responses also include `query_type`, `sub_queries` (complex path) and `final_query`, the query used for the last retrieval after any rewrites. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
+The hallucination check runs on the answer the user actually receives. If the answer isn't grounded in the retrieved context, it is regenerated once with a stricter prompt that includes the checker's list of unsupported claims, and the new answer is checked again. If that is still ungrounded, it is returned with `is_grounded=false` and a `caveat`. When streaming, the first answer arrives as tokens and a regenerated answer arrives as one `revised` event (`{"revised_answer": "..."}`) that replaces it; the `done` event carries `is_grounded`, `revised` and `caveat`, and `/query` returns the same fields. Responses also include `query_type`, `sub_queries` (complex path) and `final_query`, the query used for the last retrieval after any rewrites. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
 
 LLM calls per query:
 
-| Path | Answered first time | Each rewrite adds | No relevant documents (3 rewrites) |
-|---|---|---|---|
-| Simple | 4 (route, grade, generate, check) | 2 (rewrite, grade) | 8 |
-| Complex | 5 (route, decompose, grade, generate, check) | 3 (rewrite, decompose, grade) | 12 |
+| Path | Answered, grounded first time | With regeneration | Each rewrite adds | Worst case answered (3 rewrites + regeneration) | No relevant documents (3 rewrites) |
+|---|---|---|---|---|---|
+| Simple | 4 (route, grade, generate, check) | 6 (+ regenerate, check) | 2 (rewrite, grade) | 12 | 8 |
+| Complex | 5 (route, decompose, grade, generate, check) | 7 | 3 (rewrite, decompose, grade) | 16 | 12 |
 
 ## Rate Limits and Failures
 
-The defaults suit the Gemini free tier (15 requests per minute per model). All LLM calls share a client-side rate limiter (0.2 requests/s with a burst of 3), so a normal three-call query starts immediately and bursts queue instead of hitting 429 errors. Each LLM request times out after 30 seconds. A 429, a 503 or a timeout is retried once (after the wait the server suggests for a 429, as long as that is 40 seconds or less); no other layer retries silently.
+The defaults suit the Gemini free tier (15 requests per minute per model). All LLM calls share a client-side rate limiter (0.2 requests/s with a burst of 3), so the first three calls of a query start immediately and later calls queue (about 5 seconds each) instead of hitting 429 errors. Each LLM request times out after 30 seconds. A 429, a 503 or a timeout is retried once (after the wait the server suggests for a 429, as long as that is 40 seconds or less); no other layer retries silently.
 
-Failures are never hidden: a failed grading or hallucination check is never treated as relevant or grounded. If a call still fails, `/query` returns `status: "error"` with a clear message (HTTP 429 with `Retry-After` for rate limits, 504 for timeouts), and `/query/stream` sends an `error` event with no sources.
+Failures are never hidden: a failed grading or hallucination check is never treated as relevant or grounded, and a failed regeneration never falls back to the first answer. If a call still fails, `/query` returns `status: "error"` with a clear message (HTTP 429 with `Retry-After` for rate limits, 504 for timeouts), and `/query/stream` sends an `error` event with no sources.
 
 ## Quick Start
 
@@ -176,7 +186,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 178 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 196 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|

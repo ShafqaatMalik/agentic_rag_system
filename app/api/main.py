@@ -275,6 +275,8 @@ async def query(request: QueryRequest):
             is_grounded=final_state.get("is_grounded"),
             final_query=final_state.get("query"),
             sub_queries=final_state.get("sub_queries") or [],
+            revised=final_state.get("regeneration_count", 0) > 0,
+            caveat=final_state.get("caveat"),
             latency_ms=round(total_latency_ms, 2) if total_latency_ms else None,
             latency_breakdown=latency_breakdown,
         )
@@ -319,6 +321,8 @@ async def query_stream(request: QueryRequest):
             is_grounded = None
             final_query = request.query
             sub_queries = []
+            revised = False
+            caveat = None
             full_answer = ""
 
             # Stream through the pipeline with token-by-token generation
@@ -341,7 +345,18 @@ async def query_stream(request: QueryRequest):
                             final_query = node_state["query"]
                         if isinstance(node_state, dict) and node_state.get("sub_queries"):
                             sub_queries = node_state["sub_queries"]
+                        if isinstance(node_state, dict) and node_state.get("caveat"):
+                            caveat = node_state["caveat"]
                     final_state = update_data
+
+                    # A regenerated answer replaces the one already streamed
+                    regenerated = update_data.get("regenerate")
+                    if isinstance(regenerated, dict) and regenerated.get("generation"):
+                        revised = True
+                        yield {
+                            "event": "revised",
+                            "data": json.dumps({"revised_answer": regenerated["generation"]}),
+                        }
                 elif update_type == "done":
                     final_state = update_data
 
@@ -390,6 +405,8 @@ async def query_stream(request: QueryRequest):
                         "is_grounded": is_grounded,
                         "final_query": final_query,
                         "sub_queries": sub_queries,
+                        "revised": revised,
+                        "caveat": caveat,
                     }
                 ),
             }
