@@ -293,6 +293,8 @@ python3 evaluation/run_eval.py --judge-model gemini-3.5-flash
 
 It sends each question to `/query`, recreates each answer's final retrieval with the app's own code, and scores in-scope answers with a separate Gemini judge (temperature 0): correctness against the reference, faithfulness, answer relevance, context recall and precision, refusal accuracy, and agreement with the app's `is_grounded`. Out-of-scope questions need no judge request. A 503 from the judge (model overloaded) is retried up to 2 times, 60 seconds apart; a 429 stops judging at once. Every request actually sent counts toward `--max-judge-requests` (default 20, the judge model's free-tier daily quota), and questions left unjudged are judged on the next run with the same `--out`. Results go to `evaluation/results/<date>-<commit>/` (`results.jsonl`, `summary.md`).
 
+To split a run across two days, run `--skip-judge` first: it asks the app all 25 questions and computes everything that doesn't need the judge (context recall, router labels, refusals, latency) with no judge requests; later, run again with the same `--out` to judge the saved answers without querying the app again.
+
 The evaluation sends questions back to back, so its latency includes rate-limiter queueing. To measure single-user latency, run `python3 evaluation/run_eval.py --latency-probe --out <the run's directory>`: it sends 5 questions, each after 60 seconds of idle time, makes no judge requests, and writes `latency_probe.md` comparing single-user latency with the same questions under evaluation load.
 
 ## CI/CD Pipeline

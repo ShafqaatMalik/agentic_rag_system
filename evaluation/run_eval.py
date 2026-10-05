@@ -22,6 +22,7 @@ Usage (from the repo root, with the app running via docker compose):
     python3 evaluation/run_eval.py [--base-url http://localhost:8000] [--container agentic-rag]
                                    [--judge-model gemini-3.5-flash] [--max-judge-requests 20]
                                    [--out DIR]
+    python3 evaluation/run_eval.py --skip-judge [--out DIR]     # app side only, judge later
     python3 evaluation/run_eval.py --latency-probe [--out DIR]
 
 Results go to evaluation/results/<date>-<commit>/ by default. Only the standard library is
@@ -682,6 +683,11 @@ def main():
         help=f"measure single-user latency on {len(PROBE_IDS)} questions instead of evaluating",
     )
     ap.add_argument("--probe-spacing", type=float, default=PROBE_SPACING)
+    ap.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="ask the app and compute judge-free metrics only; judge later with the same --out",
+    )
     args = ap.parse_args()
 
     commit = git_commit()
@@ -713,13 +719,14 @@ def main():
         for d in docs:
             d["id"] = chunk_ids.get(norm(d["text"]))
 
-    judge = Judge(args.judge_model, api_key(), args.max_judge_requests)
+    judge = None if args.skip_judge else Judge(args.judge_model, api_key(), args.max_judge_requests)
     # Judged rows are saved as they complete; a re-run judges only the questions still missing
     judged_path = out / "judged.jsonl"
     judged = {
         r["id"]: r for r in read_jsonl(judged_path) if r.get("judge_model") == args.judge_model
     }
-    stopped = None
+    # --skip-judge runs the app side only; a later run with the same --out does the judging
+    stopped = "judging skipped (--skip-judge)" if args.skip_judge else None
     rows = []
     for n, item in enumerate(data["in_scope"], 1):
         if item["id"] in judged:
@@ -779,7 +786,7 @@ def main():
         "commit": commit,
         "app_model": app_model,
         "judge_model": args.judge_model,
-        "judge_requests": judge.requests_sent,
+        "judge_requests": judge.requests_sent if judge else 0,
         "judge_cap": args.max_judge_requests,
         "judge_stopped": stopped,
         "k": ret["k"],
@@ -790,7 +797,7 @@ def main():
         for r in rows
         if r["type"] != "out_of_scope" and not r.get("judge") and r["status"] != "error"
     ]
-    print(f"\nJudge requests sent: {judge.requests_sent}/{args.max_judge_requests}")
+    print(f"\nJudge requests sent: {judge.requests_sent if judge else 0}/{args.max_judge_requests}")
     if unjudged:
         print(f"Unjudged (re-run to judge): {', '.join(unjudged)}")
     print(f"Wrote {out / 'results.jsonl'} and {out / 'summary.md'}")
