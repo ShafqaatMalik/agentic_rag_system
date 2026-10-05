@@ -10,7 +10,7 @@ from typing import Literal
 import structlog
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.errors import handle_llm_error, llm_retry
 from app.llm import get_llm_with_structured_output
@@ -25,6 +25,14 @@ class GradeDocument(BaseModel):
         description="Whether the document is relevant to the query: 'yes' or 'no'"
     )
     reasoning: str = Field(description="Brief explanation for the relevance decision")
+
+    @field_validator("is_relevant", mode="before")
+    @classmethod
+    def booleans_to_yes_no(cls, value):
+        """The model sometimes returns true/false instead of "yes"/"no"; accept both."""
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        return value
 
 
 class IndexedGrade(GradeDocument):

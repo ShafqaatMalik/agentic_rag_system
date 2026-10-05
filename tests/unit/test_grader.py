@@ -281,3 +281,52 @@ class TestGradingWithSubQueries:
 
         assert "several parts" not in seen[0]
         assert "Query: What is HNSW?" in seen[0]
+
+
+class TestBooleanVerdicts:
+    """The model sometimes answers true/false instead of "yes"/"no"."""
+
+    @pytest.mark.unit
+    def test_booleans_map_to_yes_no(self):
+        assert GradeDocument(is_relevant=True, reasoning="r").is_relevant == "yes"
+        assert GradeDocument(is_relevant=False, reasoning="r").is_relevant == "no"
+        assert IndexedGrade(index=1, is_relevant=False, reasoning="r").is_relevant == "no"
+
+    @pytest.mark.unit
+    def test_other_values_are_still_rejected(self):
+        with pytest.raises(ValueError):
+            GradeDocument(is_relevant="maybe", reasoning="r")
+        with pytest.raises(ValueError):
+            GradeDocument(is_relevant=1, reasoning="r")
+
+    @pytest.mark.unit
+    def test_batch_with_boolean_verdicts_parses(self):
+        """The exact shape that failed live: a batch whose verdicts are JSON booleans."""
+        raw = {
+            "grades": [
+                {"index": 1, "is_relevant": False, "reasoning": "pricing not covered"},
+                {"index": 2, "is_relevant": True, "reasoning": "relevant"},
+            ]
+        }
+
+        batch = BatchGrade.model_validate(raw)
+
+        assert [g.is_relevant for g in batch.grades] == ["no", "yes"]
+
+    @pytest.mark.unit
+    @patch("app.chains.grader.grade_batch")
+    def test_boolean_batch_grades_documents(self, mock_grade_batch):
+        mock_grade_batch.return_value = BatchGrade.model_validate(
+            {
+                "grades": [
+                    {"index": 1, "is_relevant": True, "reasoning": "r"},
+                    {"index": 2, "is_relevant": False, "reasoning": "r"},
+                ]
+            }
+        )
+        docs = [Document(page_content="A"), Document(page_content="B")]
+
+        result = grade_documents("q", docs)
+
+        assert result.relevant_docs == [docs[0]]
+        assert result.irrelevant_count == 1

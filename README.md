@@ -188,7 +188,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 203 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 207 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|

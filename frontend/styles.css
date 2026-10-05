@@ -213,6 +213,10 @@ body {
     color: var(--text-primary);
 }
 
+.stat-value-compact {
+    font-size: 1rem;
+}
+
 .stat-label {
     font-size: 0.75rem;
     color: var(--text-muted);

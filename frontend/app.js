@@ -352,11 +352,16 @@ class AgenticRAG {
 
     async loadStats() {
         try {
-            const response = await fetch(`${this.apiBase}/collection/stats`);
-            const data = await response.json();
+            // The collection count is chunks; documents are the distinct sources
+            const [stats, docs] = await Promise.all([
+                fetch(`${this.apiBase}/collection/stats`).then(r => r.json()),
+                fetch(`${this.apiBase}/collection/documents`).then(r => r.json()),
+            ]);
+            const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-            this.docCount.textContent = data.document_count;
-            this.collectionName.textContent = data.name;
+            this.docCount.textContent =
+                `${plural(docs.total_count, 'document')} · ${plural(stats.document_count, 'chunk')}`;
+            this.collectionName.textContent = stats.name;
         } catch (error) {
             console.error('Failed to load stats:', error);
         }
@@ -680,11 +685,11 @@ class AgenticRAG {
         let totalMs = timingData.total_ms;
         if (!totalMs && timingData.breakdown) {
             totalMs = Object.values(timingData.breakdown).reduce((sum, val) => sum + val, 0);
-            totalMs = Math.round(totalMs * 100) / 100; // Round to 2 decimals
         }
 
-        // Format breakdown items with total first
-        const totalDisplay = totalMs ? `${totalMs}ms` : 'N/A';
+        // Latency is shown in seconds with one decimal, e.g. "11.3 s"
+        const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
+        const totalDisplay = totalMs ? seconds(totalMs) : 'N/A';
 
         let breakdownItems = '';
 
@@ -705,7 +710,7 @@ class AgenticRAG {
                 return `
                     <div class="timing-item">
                         <span class="timing-label">${displayName}</span>
-                        <span class="timing-value">${durationMs}ms</span>
+                        <span class="timing-value">${seconds(durationMs)}</span>
                     </div>
                 `;
             })
