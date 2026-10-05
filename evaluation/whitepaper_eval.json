@@ -1,0 +1,541 @@
+{
+  "document": "whitepaper_emebddings_vectorstores_v2.pdf",
+  "title": "Embeddings & Vector Stores (Google, February 2025)",
+  "collection": {
+    "name": "documents",
+    "chunks": 139,
+    "pages": 64
+  },
+  "created": "2026-10-02",
+  "notes": [
+    "Page numbers are 1-based PDF pages (Chroma stores page metadata 0-based).",
+    "Quotes are verbatim from the ingested chunks with whitespace collapsed to single spaces; chunk_ids lists every Chroma chunk that contains the quote (chunks overlap by 200 characters).",
+    "Out-of-scope questions should end in status 'no_relevant_docs' from /query.",
+    "q20 is tagged 'synthesis': no single section answers it, so it is reported separately from the other 19 in-scope questions."
+  ],
+  "in_scope": [
+    {
+      "id": "q01",
+      "section": "Why embeddings are important",
+      "type": "factual",
+      "question": "How many dimensions does the original BERT model embed text into?",
+      "ground_truth": "768 dimensions (a vector of 768 numbers).",
+      "supporting": [
+        {
+          "page": 6,
+          "chunk_ids": [
+            "98623f97-79fe-4c63-a386-7a225e916a48"
+          ],
+          "quote": "original BERT Model [ref] embeds text into a vector of 768 numbers, thus mapping from the very high dimensional space of all sentences to a much smaller 768 dimensions"
+        }
+      ]
+    },
+    {
+      "id": "q02",
+      "section": "Evaluating embedding quality",
+      "type": "multi_passage",
+      "question": "How does the whitepaper define precision and recall for retrieval, and what example values does it give?",
+      "ground_truth": "Precision = relevant documents retrieved / total retrieved (e.g. 7 relevant of 10 retrieved gives precision@10 = 0.7). Recall = relevant documents retrieved / total relevant documents in the corpus (e.g. 3 of 6 relevant found in 20 retrieved gives recall@20 = 0.5).",
+      "supporting": [
+        {
+          "page": 9,
+          "chunk_ids": [
+            "7d07fbcc-95cb-4769-b459-010e0fc774e2"
+          ],
+          "quote": "Precision is quantified by dividing the number of relevant documents by the total number of retrieved documents."
+        },
+        {
+          "page": 9,
+          "chunk_ids": [
+            "2621dba6-5bf3-458a-89c2-cb78d915f600"
+          ],
+          "quote": "Recall looks at how many of the relevant documents were retrieved and is calculated by dividing the number of relevant documents retrieved by the total number of relevant documents in the corpus."
+        },
+        {
+          "page": 9,
+          "chunk_ids": [
+            "2621dba6-5bf3-458a-89c2-cb78d915f600"
+          ],
+          "quote": "if 20 documents were retrieved and three of them were relevant, but there were six total relevant documents in the corpus the recall@20 would be 3/6 = 0.5."
+        }
+      ]
+    },
+    {
+      "id": "q03",
+      "section": "Evaluating embedding quality",
+      "type": "factual",
+      "question": "What does nDCG measure, and what range does the normalized score take?",
+      "ground_truth": "nDCG (Normalized Discounted Cumulative Gain) measures the quality of the ranking produced by the embedding model compared to the desired ranking; it divides DCG by the ideal ordering score and ranges from 0.0 to 1.0.",
+      "supporting": [
+        {
+          "page": 10,
+          "chunk_ids": [
+            "c0391606-828a-4349-b406-d17b391a0930"
+          ],
+          "quote": "metrics like the Normalized Discounted Cumulative Gain (nDCG) can measure the quality of the ranking produced by the embedding model compared to the desired ranking."
+        },
+        {
+          "page": 10,
+          "chunk_ids": [
+            "8b9374f7-cf60-4a35-bb63-38bedf038ee6"
+          ],
+          "quote": "The normalized version is calculated by dividing the DCG score by the ideal ordering score and ranges from 0.0 to 1.0 for comparisons across different queries."
+        }
+      ]
+    },
+    {
+      "id": "q04",
+      "section": "Search example",
+      "type": "multi_passage",
+      "question": "How much have BEIR benchmark scores improved from the original BERT models to Google's 2025 embeddings?",
+      "ground_truth": "From an average BEIR score of 10.6 for the original BERT models to 55.7 for current (2025) Google embeddings.",
+      "supporting": [
+        {
+          "page": 12,
+          "chunk_ids": [
+            "06d312d2-39bd-4244-a1cb-4eadb8fb3c48"
+          ],
+          "quote": "The original BERT models were a leap forward at the time, and had an average score of 10.6 on the BEIR benchmark, current 2025 embeddings"
+        },
+        {
+          "page": 13,
+          "chunk_ids": [
+            "0d3fb3ad-419c-41f8-b175-6243190daec2"
+          ],
+          "quote": "from Google with a simple API call, and no AI knowledge required, now have an average BEIR score of 55.7."
+        }
+      ]
+    },
+    {
+      "id": "q05",
+      "section": "Word embeddings",
+      "type": "factual",
+      "question": "How do the CBOW and skip-gram approaches of Word2Vec differ?",
+      "ground_truth": "CBOW predicts the middle word from the surrounding words; it is fast to train and slightly more accurate for frequent words. Skip-gram does the inverse, using the middle word to predict the surrounding words; it is slower to train but works well with small data and is more accurate for rare words.",
+      "supporting": [
+        {
+          "page": 19,
+          "chunk_ids": [
+            "6e1f5053-8034-418c-a416-281f02f71d0b",
+            "5d55d362-dff8-4c9f-89be-1c2ea6dfaf7f"
+          ],
+          "quote": "The Continuous bag of words (CBOW) approach: Tries to predict the middle word, using the embeddings of the surrounding words as input."
+        },
+        {
+          "page": 19,
+          "chunk_ids": [
+            "5d55d362-dff8-4c9f-89be-1c2ea6dfaf7f"
+          ],
+          "quote": "This approach is fast to train and is slightly more accurate for frequent words."
+        },
+        {
+          "page": 19,
+          "chunk_ids": [
+            "5d55d362-dff8-4c9f-89be-1c2ea6dfaf7f"
+          ],
+          "quote": "The skip-gram approach: The setup is inverse of that of CBOW, with the middle word being used to predict the surrounding words within a certain range. This approach is slower to train but works well with small data and is more accurate for rare words."
+        }
+      ]
+    },
+    {
+      "id": "q06",
+      "section": "Word embeddings",
+      "type": "factual",
+      "question": "What shortcoming of Word2Vec does GloVe address, and how?",
+      "ground_truth": "Word2Vec captures local statistics within a sliding window but not global (whole-corpus) statistics. GloVe builds a co-occurrence matrix and factorizes it, so its word representations capture both global and local information.",
+      "supporting": [
+        {
+          "page": 20,
+          "chunk_ids": [
+            "07dbeae6-c422-4a47-888d-a3a61930f7df"
+          ],
+          "quote": "one of the major caveats of Word2Vec is that although it accounts well for local statistics of words within a certain sliding window, it does not capture the global statistics (words in the whole corpus)."
+        },
+        {
+          "page": 20,
+          "chunk_ids": [
+            "07dbeae6-c422-4a47-888d-a3a61930f7df"
+          ],
+          "quote": "It does this by first creating a co-occurrence matrix, which represents the relationships between words. GloVe then uses a factorization technique to learn word representations from the co-occurrence matrix."
+        }
+      ]
+    },
+    {
+      "id": "q07",
+      "section": "Word embeddings",
+      "type": "multi_passage",
+      "question": "What does SWIVEL stand for, and how does it compare with GloVe?",
+      "ground_truth": "Skip-Window Vectors with Negative Sampling. It is generally slightly less accurate than GloVe on average but considerably faster to train, because it uses distributed training with matrix factorization in parallel on multiple machines.",
+      "supporting": [
+        {
+          "page": 20,
+          "chunk_ids": [
+            "7c017a29-8d1a-4e55-8baf-9147743947d9"
+          ],
+          "quote": "SWIVEL stands for Skip-Window Vectors with Negative Sampling."
+        },
+        {
+          "page": 21,
+          "chunk_ids": [
+            "a18b672c-f4ef-4be8-b0f7-53cda0a45bfc"
+          ],
+          "quote": "It is generally considered only slightly less accurate than GloVe on average, but is considerably faster to train."
+        }
+      ]
+    },
+    {
+      "id": "q08",
+      "section": "Document embeddings",
+      "type": "factual",
+      "question": "What are the two major weaknesses of the bag-of-words paradigm?",
+      "ground_truth": "It ignores both word ordering and semantic meaning, so BoW models fail to capture the sequential relationships between words.",
+      "supporting": [
+        {
+          "page": 24,
+          "chunk_ids": [
+            "7fb8c63b-4627-43cf-b3d3-5c286845774f"
+          ],
+          "quote": "the bag-of-words paradigm also has two major weaknesses: both the word ordering and the semantic meanings are ignored."
+        }
+      ]
+    },
+    {
+      "id": "q09",
+      "section": "Deeper pretrained LLMs",
+      "type": "factual",
+      "question": "Which pre-training objectives did BERT use, and which token's embedding typically represents the whole input?",
+      "ground_truth": "Masked language modelling (MLM) and next sentence prediction; the embedding of the first token, the special [CLS] token, is typically used for the whole input.",
+      "supporting": [
+        {
+          "page": 26,
+          "chunk_ids": [
+            "abdf9da2-e809-4f97-8ae6-1b9a78f4e427"
+          ],
+          "quote": "In pretraining, BERT utilized masked language model (MLM) as the pre-training objective."
+        },
+        {
+          "page": 26,
+          "chunk_ids": [
+            "abdf9da2-e809-4f97-8ae6-1b9a78f4e427"
+          ],
+          "quote": "BERT also utilizes the next sentence prediction task in pretraining."
+        },
+        {
+          "page": 26,
+          "chunk_ids": [
+            "abdf9da2-e809-4f97-8ae6-1b9a78f4e427"
+          ],
+          "quote": "Typically, the embedding of the first token (a special token named [CLS]) is used as the embedding for the whole input."
+        }
+      ]
+    },
+    {
+      "id": "q10",
+      "section": "Deeper pretrained LLMs",
+      "type": "factual",
+      "question": "What do Matryoshka embeddings allow users to do?",
+      "ground_truth": "Choose how many embedding dimensions are appropriate for their task, reducing the data required for storage and indexing.",
+      "supporting": [
+        {
+          "page": 27,
+          "chunk_ids": [
+            "dadb44fc-87c8-4ae5-bd30-6bedf843eb44"
+          ],
+          "quote": "Matryoshka Embeddings55,56 allow the downstream user to select how many dimensions are appropriate for their task to reduce data required for storage and indexing when possible."
+        }
+      ]
+    },
+    {
+      "id": "q11",
+      "section": "Training embeddings",
+      "type": "factual",
+      "question": "What architecture and loss function are typically used to train current embedding models?",
+      "ground_truth": "A dual encoder (two-tower) architecture, trained with a variation of contrastive loss that brings positive examples closer and pushes negative examples apart.",
+      "supporting": [
+        {
+          "page": 34,
+          "chunk_ids": [
+            "c112406b-acd1-4f64-bac7-8acd21c82ab7"
+          ],
+          "quote": "Current embedding models usually use dual encoder (two tower) architecture."
+        },
+        {
+          "page": 34,
+          "chunk_ids": [
+            "c112406b-acd1-4f64-bac7-8acd21c82ab7"
+          ],
+          "quote": "The loss used in embedding models training is usually a variation of contrastive loss"
+        },
+        {
+          "page": 34,
+          "chunk_ids": [
+            "c112406b-acd1-4f64-bac7-8acd21c82ab7",
+            "ee5edb55-888b-446a-8e62-ee923510b9d7"
+          ],
+          "quote": "Training with contrastive loss brings positive examples closer and negative examples far apart."
+        }
+      ]
+    },
+    {
+      "id": "q12",
+      "section": "Vector search",
+      "type": "factual",
+      "question": "Which similarity metric does the whitepaper say works well for lower dimensions, and what about higher-dimensional data?",
+      "ground_truth": "Euclidean (L2) distance works well for lower dimensions. Cosine similarity and dot product (equivalent when vector norms are 1) seem to work better for higher-dimensional data.",
+      "supporting": [
+        {
+          "page": 37,
+          "chunk_ids": [
+            "6f4ae62f-05db-43aa-9e5a-6e24d264dcaa"
+          ],
+          "quote": "Euclidean distance (i.e., L2 distance) is a geometric measure of the distance between two points in a vector space. This works well for lower dimensions."
+        },
+        {
+          "page": 37,
+          "chunk_ids": [
+            "6f4ae62f-05db-43aa-9e5a-6e24d264dcaa"
+          ],
+          "quote": "They are equivalent when the vector norms are 1. This seems to work better for higher dimensional data."
+        }
+      ]
+    },
+    {
+      "id": "q13",
+      "section": "Vector search algorithms",
+      "type": "multi_passage",
+      "question": "How does the runtime of linear search compare with approximate nearest neighbour (ANN) search?",
+      "ground_truth": "Linear (brute-force) search scales linearly, O(N), with the number of documents, which is too slow for millions of documents; ANN reduces the search space to O(log N) at the cost of a small margin of error.",
+      "supporting": [
+        {
+          "page": 37,
+          "chunk_ids": [
+            "518cc31a-1cb0-4ffc-ada0-9d6110f447cc"
+          ],
+          "quote": "the runtime of this approach scales linearly (O(N)) with the amount of documents or items to search."
+        },
+        {
+          "page": 38,
+          "chunk_ids": [
+            "20b9c11b-9bd7-478f-838b-9fc143ecf91c"
+          ],
+          "quote": "ANN is a technique for finding the closest points to a given point in a dataset with a small margin of error - but with far less computations required as the search space is greatly reduced to O(logN)."
+        }
+      ]
+    },
+    {
+      "id": "q14",
+      "section": "LSH & trees",
+      "type": "factual",
+      "question": "How does locality sensitive hashing (LSH) find similar items, and what controls its recall/speed trade-off?",
+      "ground_truth": "It uses hash functions that map similar items to the same bucket with high probability, then searches only the candidates in the same (or adjacent) buckets. The number of hash functions/tables and buckets determines the recall/speed trade-off.",
+      "supporting": [
+        {
+          "page": 38,
+          "chunk_ids": [
+            "af51d8eb-7b41-4f0c-b79a-7df394a45bea"
+          ],
+          "quote": "It does this by creating one or more hash functions that map similar items to the same hash bucket with high probability."
+        },
+        {
+          "page": 38,
+          "chunk_ids": [
+            "af51d8eb-7b41-4f0c-b79a-7df394a45bea"
+          ],
+          "quote": "The number of hash functions/tables and buckets determine the search recall/speed tradeoff"
+        }
+      ]
+    },
+    {
+      "id": "q15",
+      "section": "HNSW",
+      "type": "factual",
+      "question": "How does HNSW search for nearest neighbours?",
+      "ground_truth": "HNSW is a hierarchical proximity graph whose top layer has the longest links and bottom layer the shortest. Search starts at the top layer, greedily traversing to the most similar vertex (a local minimum), then moves down a layer, repeating until the lowest layer, and returns the K nearest neighbours from the vertices traversed.",
+      "supporting": [
+        {
+          "page": 41,
+          "chunk_ids": [
+            "bce25cad-c0a9-4dc1-a134-2e1f07c40219"
+          ],
+          "quote": "A HNSW is a proximity graph with a hierarchical structure where the graph links are spread across different layers. The top layer has the longest links and the bottom layer has the shortest ones."
+        },
+        {
+          "page": 41,
+          "chunk_ids": [
+            "bce25cad-c0a9-4dc1-a134-2e1f07c40219"
+          ],
+          "quote": "the search starts at the topmost layer where the algorithm greedily traverses the graph to find the vertex most semantically similar to the query."
+        }
+      ]
+    },
+    {
+      "id": "q16",
+      "section": "ScaNN",
+      "type": "factual",
+      "question": "When is ScaNN's partitioning step crucial, and what heuristic does the whitepaper give for the number of partitions?",
+      "ground_truth": "It is optional for small datasets but crucial for larger datasets with more than 100k embedding vectors; a good heuristic is to set the number of partitions to the square root of the number of vectors.",
+      "supporting": [
+        {
+          "page": 44,
+          "chunk_ids": [
+            "fb1d0b43-858f-4883-b14c-8cef80153a10"
+          ],
+          "quote": "for larger datasets with >100k embedding vectors, the partitioning step is crucial since by pruning the search space it cuts down the search space by magnitudes"
+        },
+        {
+          "page": 44,
+          "chunk_ids": [
+            "fb1d0b43-858f-4883-b14c-8cef80153a10"
+          ],
+          "quote": "A good heuristic is to set the number of partitions to be the square root of the number of vectors."
+        }
+      ]
+    },
+    {
+      "id": "q17",
+      "section": "Vector databases",
+      "type": "multi_passage",
+      "question": "Which vector databases use ScaNN and which use HNSW, according to the whitepaper?",
+      "ground_truth": "Vertex AI Vector Search uses ScaNN, and AlloyDB has a native ScaNN index extension (pgvector-compatible). Pinecone and Weaviate leverage HNSW.",
+      "supporting": [
+        {
+          "page": 49,
+          "chunk_ids": [
+            "536a7d01-ebfd-4c65-9e8a-4771ed3c6e8f"
+          ],
+          "quote": "Vertex AI Vector Search is a vector database built by Google that uses the ScaNN algorithm for fast vector search"
+        },
+        {
+          "page": 49,
+          "chunk_ids": [
+            "536a7d01-ebfd-4c65-9e8a-4771ed3c6e8f",
+            "f7204459-b889-4c41-8a77-5c4f5e797ab2"
+          ],
+          "quote": "AlloyDB also has a ScaNN index extension that is a native implementation of ScaNN and is pgvector-compatible."
+        },
+        {
+          "page": 49,
+          "chunk_ids": [
+            "f7204459-b889-4c41-8a77-5c4f5e797ab2"
+          ],
+          "quote": "Pinecone37 and Weaviate39 leverage HNSW for their fast vector search"
+        }
+      ]
+    },
+    {
+      "id": "q18",
+      "section": "Operational considerations",
+      "type": "factual",
+      "question": "What kind of information can embeddings represent poorly, and how can this be mitigated?",
+      "ground_truth": "Literal or syntactic information, especially domain-specific words or IDs (a query's ID may not be matched even when the text is). Mitigate by combining full-text search to pre-filter or post-filter before semantic search.",
+      "supporting": [
+        {
+          "page": 50,
+          "chunk_ids": [
+            "417610d1-b750-4782-b92e-40f867bcb295"
+          ],
+          "quote": "while embeddings are great at representing semantic information, sometimes they can be suboptimal at representing literal or syntactic information. This is especially true for domain-specific words or IDs."
+        },
+        {
+          "page": 50,
+          "chunk_ids": [
+            "5eeb88db-a291-456c-a0bb-89bd4a6c28cb"
+          ],
+          "quote": "You can overcome this challenge by using a combination of full-text search to pre-filter or post-filter the search space before passing it onto the semantic search module."
+        }
+      ]
+    },
+    {
+      "id": "q19",
+      "section": "RAG",
+      "type": "factual",
+      "question": "Which two common LLM problems does RAG help with, and does it eliminate hallucinations?",
+      "ground_truth": "It helps with (1) hallucination, i.e. factually incorrect but plausible responses, and (2) the high cost of retraining to keep up with current information. It reduces but does not completely eliminate hallucinations; returning sources and a coherence check helps further.",
+      "supporting": [
+        {
+          "page": 52,
+          "chunk_ids": [
+            "bef37eb4-ea0a-40a0-ac57-ff3eef42c0d0"
+          ],
+          "quote": "RAG can help with two common problems with LLMs: 1) their tendency to ‘hallucinate’ and generate factually incorrect but plausible sounding responses and 2) the high cost of retraining to keep up with current information"
+        },
+        {
+          "page": 52,
+          "chunk_ids": [
+            "8ec433ad-48ed-41a4-9ca8-b7dc0b3fb7aa"
+          ],
+          "quote": "Although RAG can reduce hallucinations, it does not completely eliminate them."
+        }
+      ]
+    },
+    {
+      "id": "q20",
+      "section": "Sparse vs dense (spans sections)",
+      "type": "synthesis",
+      "question": "How do sparse and dense retrieval differ?",
+      "ground_truth": "Not covered by a single section; assembled from three passages. Sparse representations (e.g. TF-IDF/BM25 bag-of-words) capture term-level importance and drive keyword matching, which misses misspelled or differently worded queries. Dense embeddings capture semantic meaning, so vector search finds relevant results even with different wording, but they can be weak on literal terms such as IDs. Combining full-text (sparse) and semantic (dense) search addresses this.",
+      "supporting": [
+        {
+          "page": 24,
+          "chunk_ids": [
+            "a31f88ac-a492-4ca1-aed8-d8d3c07454bc"
+          ],
+          "quote": "TF-IDF-based models can either be a sparse embedding, which represents the term-level importance, or can be combined with word embeddings as a weighting factor to generate a dense embedding for the documents."
+        },
+        {
+          "page": 36,
+          "chunk_ids": [
+            "2a54dea5-17d3-44db-aec8-6967c4210913"
+          ],
+          "quote": "if the key word is misspelled or described with a differently worded text, a traditional keyword search returns incorrect or no results."
+        },
+        {
+          "page": 36,
+          "chunk_ids": [
+            "19c41717-6746-4e3f-80b9-a2c7b70bf671"
+          ],
+          "quote": "This is where vector search is very powerful: it uses the vector or embedded semantic representation of documents."
+        },
+        {
+          "page": 50,
+          "chunk_ids": [
+            "417610d1-b750-4782-b92e-40f867bcb295"
+          ],
+          "quote": "sometimes they can be suboptimal at representing literal or syntactic information. This is especially true for domain-specific words or IDs."
+        }
+      ]
+    }
+  ],
+  "out_of_scope": [
+    {
+      "id": "oos01",
+      "question": "What is the capital of Australia?",
+      "expected_status": "no_relevant_docs",
+      "why_out_of_scope": "General knowledge; unrelated to the whitepaper."
+    },
+    {
+      "id": "oos02",
+      "question": "Who won the 2022 FIFA World Cup?",
+      "expected_status": "no_relevant_docs",
+      "why_out_of_scope": "Sports; unrelated to the whitepaper."
+    },
+    {
+      "id": "oos03",
+      "question": "How do I bake a chocolate cake?",
+      "expected_status": "no_relevant_docs",
+      "why_out_of_scope": "Cooking; unrelated to the whitepaper."
+    },
+    {
+      "id": "oos04",
+      "question": "How much does Pinecone charge per million stored vectors?",
+      "expected_status": "no_relevant_docs",
+      "why_out_of_scope": "Near-domain: Pinecone is named as a vector database, but no pricing is given."
+    },
+    {
+      "id": "oos05",
+      "question": "How many parameters does GPT-4 have?",
+      "expected_status": "no_relevant_docs",
+      "why_out_of_scope": "Near-domain: GPT models are mentioned, but no GPT-4 parameter count is given (only T5 11B and PaLM 540B)."
+    }
+  ]
+}

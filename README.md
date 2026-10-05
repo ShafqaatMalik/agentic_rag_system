@@ -235,7 +235,10 @@ agentic_rag_system/
 │   └── styles.css
 ├── docs/screenshots/            # README screenshots
 ├── data/                        # Documents to ingest (mounted at /app/data)
-├── evaluation/eval_dataset.json # RAG evaluation dataset
+├── evaluation/
+│   ├── eval_dataset.json        # Small dataset used by the mocked evaluation tests
+│   ├── whitepaper_eval.json     # Live evaluation set: 20 in-scope + 5 out-of-scope questions
+│   └── run_eval.py              # Live evaluation against the running app (Gemini judge)
 ├── tests/
 │   ├── unit/                    # Chain-level tests
 │   ├── integration/             # Graph flow and rewrite-loop tests
@@ -276,6 +279,17 @@ The system includes built-in evaluation metrics:
 | **Answer Relevance** | Does the answer address the user's query? |
 | **Context Precision** | Are the retrieved documents relevant? |
 | **Context Recall** | Did we retrieve all important documents? |
+
+### Live evaluation
+
+`evaluation/run_eval.py` evaluates the running app against `evaluation/whitepaper_eval.json` (20 questions with verbatim supporting quotes from the whitepaper, plus 5 out-of-scope questions that should end in "no relevant documents"):
+
+```bash
+docker compose up -d
+python3 evaluation/run_eval.py --judge-model gemini-3.5-flash
+```
+
+It sends each question to `/query`, recreates each answer's final retrieval with the app's own code, and scores in-scope answers with a separate Gemini judge (temperature 0): correctness against the reference, faithfulness, answer relevance, context recall and precision, refusal accuracy, and agreement with the app's `is_grounded`. It makes at most one judge request per in-scope question and none for out-of-scope ones, never retries, and stops at `--max-judge-requests` (default 20, the judge model's free-tier daily quota). Questions left unjudged are judged on the next run. Results go to `evaluation/results/<date>-<commit>/` (`results.jsonl`, `summary.md`).
 
 ## CI/CD Pipeline
 
