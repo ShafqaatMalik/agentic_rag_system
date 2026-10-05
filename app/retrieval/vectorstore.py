@@ -15,6 +15,10 @@ from app.config import get_settings
 
 logger = structlog.get_logger()
 
+# Complex path: the question plus 2-3 sub-queries at k=4 gives up to 16 candidates;
+# keep the top 12 after merging (ranks 1-3 of every query always survive)
+MAX_MERGED_CHUNKS = 12
+
 
 class VectorStoreManager:
     """Manages ChromaDB vector store operations."""
@@ -133,16 +137,20 @@ class VectorStoreManager:
 
         return results
 
-    def retrieve_for_queries(self, queries: list[str], k: int | None = None) -> list[Document]:
+    def retrieve_for_queries(
+        self, queries: list[str], k: int | None = None, max_docs: int | None = None
+    ) -> list[Document]:
         """
         Retrieve top-k documents for each query and merge them.
 
         Results are interleaved by rank (every query's best hit first) and
-        de-duplicated by chunk text, so at most k * len(queries) documents come back.
+        de-duplicated by chunk text, so at most k * len(queries) documents come back,
+        or max_docs if that is smaller.
 
         Args:
-            queries: Sub-queries to retrieve for
+            queries: Queries to retrieve for
             k: Documents per query (defaults to RETRIEVAL_K)
+            max_docs: Optional cap on the merged result
 
         Returns:
             Merged, de-duplicated documents
@@ -157,7 +165,30 @@ class VectorStoreManager:
                 if rank < len(docs) and docs[rank].page_content not in seen:
                     seen.add(docs[rank].page_content)
                     merged.append(docs[rank])
-        return merged
+        return merged[:max_docs] if max_docs else merged
+
+    def retrieve_for_question(
+        self, question: str, sub_queries: list[str], k: int | None = None
+    ) -> list[Document]:
+        """
+        Complex path retrieval: the question itself plus each sub-query.
+
+        Retrieving for the original question too means decomposition can't lose
+        its key terms. Results are merged, de-duplicated and capped at
+        MAX_MERGED_CHUNKS.
+
+        Args:
+            question: The (possibly rewritten) user question
+            sub_queries: Its 2-3 sub-queries
+            k: Documents per query (defaults to RETRIEVAL_K)
+
+        Returns:
+            Merged, de-duplicated documents, the question's own hits first
+        """
+        queries = [question] + [
+            q for q in sub_queries if q.strip().lower() != question.strip().lower()
+        ]
+        return self.retrieve_for_queries(queries, k=k, max_docs=MAX_MERGED_CHUNKS)
 
     async def similarity_search(self, query: str, k: int | None = None) -> list[Document]:
         """Perform similarity search."""

@@ -207,7 +207,7 @@ class TestComplexPath:
         from app.chains.router import RouteQuery
 
         router.return_value = RouteQuery(query_type="complex", reasoning="comparison")
-        mock_vectorstore.return_value.retrieve_for_queries.return_value = docs
+        mock_vectorstore.return_value.retrieve_for_question.return_value = docs
 
     @pytest.mark.e2e
     @pytest.mark.asyncio
@@ -248,7 +248,10 @@ class TestComplexPath:
         assert result["query_type"] == "complex"
         assert result["sub_queries"] == sub_queries
         mock_decompose.assert_called_once_with(question)
-        mock_vectorstore.return_value.retrieve_for_queries.assert_called_once_with(sub_queries, k=4)
+        # Retrieval covers the original question as well as its sub-queries
+        mock_vectorstore.return_value.retrieve_for_question.assert_called_once_with(
+            question, sub_queries, k=4
+        )
         mock_vectorstore.return_value.vectorstore.similarity_search.assert_not_called()
         # The grader sees every merged chunk and the sub-queries
         mock_grade.assert_called_once_with(question, docs, sub_queries=sub_queries)
@@ -296,7 +299,7 @@ class TestComplexPath:
         result = await run_rag_pipeline("original question")
 
         assert [c.args[0] for c in mock_decompose.call_args_list] == ["original question", "better"]
-        assert mock_vectorstore.return_value.retrieve_for_queries.call_count == 2
+        assert mock_vectorstore.return_value.retrieve_for_question.call_count == 2
         mock_vectorstore.return_value.vectorstore.similarity_search.assert_not_called()
         assert result["sub_queries"] == ["b1", "b2", "b3"]
         assert result["iteration_count"] == 1

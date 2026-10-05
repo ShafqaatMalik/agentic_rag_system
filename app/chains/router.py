@@ -24,23 +24,30 @@ class RouteQuery(BaseModel):
     """Schema for query routing decision."""
 
     query_type: Literal["simple", "complex"] = Field(
-        description="The type of query: 'simple' for factual lookups, 'complex' for analytical questions"
+        description="'complex' only for comparisons or clearly separate parts; otherwise 'simple'"
     )
     reasoning: str = Field(description="Brief explanation for the routing decision")
 
 
-ROUTER_SYSTEM_PROMPT = """You are a query classifier for a RAG system. Your job is to analyze incoming queries and classify them.
+ROUTER_SYSTEM_PROMPT = """You classify questions for a document search system. The label decides how the documents are searched:
+- "simple": one search is enough
+- "complex": the question is split into separate searches, one per part
 
-Classify the query as one of:
-- "simple": Direct factual questions, single-topic lookups, straightforward information retrieval
-  Examples: "What is the company revenue?", "Who is the CEO?", "What year was it founded?"
+Default to "simple". Use "complex" only when the question:
+1. Compares or contrasts two or more named things (for example "X vs Y" or "How do X and Y differ?"), or
+2. Asks two or more clearly separate questions that would need different passages to answer.
 
-- "complex": Multi-part questions, analytical queries, comparisons, reasoning-heavy questions
-  Examples: "How has revenue changed over the past 3 years and what factors contributed?",
-            "Compare the AI strategies of different departments",
-            "What are the implications of the new policy?"
+A question about a single topic is "simple", even if it asks how or why something works, asks for several details about that one thing, or needs a longer explanation.
 
-Analyze the query and provide your classification with brief reasoning."""
+Examples:
+- "What year was the company founded?" -> simple
+- "How does a hash map handle collisions?" -> simple (one topic, needs an explanation)
+- "What are the steps to reset a password, and how long does each take?" -> simple (one topic, several details)
+- "Compare PostgreSQL and MongoDB for storing user sessions." -> complex (comparison)
+- "How do TCP and UDP differ in reliability?" -> complex (comparison)
+- "What is the refund policy, and which countries do you ship to?" -> complex (two unrelated parts)
+
+Give the label and a brief reason."""
 
 ROUTER_HUMAN_PROMPT = """Query: {query}
 

@@ -35,11 +35,59 @@ class TestRouterChain:
 
     @pytest.mark.unit
     def test_router_system_prompt_content(self):
-        """Test that system prompt contains key instructions."""
-        assert "simple" in ROUTER_SYSTEM_PROMPT
-        assert "complex" in ROUTER_SYSTEM_PROMPT
-        assert "factual" in ROUTER_SYSTEM_PROMPT.lower()
-        assert "analytical" in ROUTER_SYSTEM_PROMPT.lower()
+        """Test the prompt defaults to simple and limits complex to comparisons or separate parts."""
+        assert 'Default to "simple"' in ROUTER_SYSTEM_PROMPT
+        assert "Compares or contrasts" in ROUTER_SYSTEM_PROMPT
+        assert "clearly separate questions" in ROUTER_SYSTEM_PROMPT
+        assert 'single topic is "simple"' in ROUTER_SYSTEM_PROMPT
+        # No longer sends "analytical" or "reasoning-heavy" questions to complex
+        assert "analytical" not in ROUTER_SYSTEM_PROMPT.lower()
+        assert "reasoning-heavy" not in ROUTER_SYSTEM_PROMPT.lower()
+
+    @pytest.mark.unit
+    def test_router_prompt_has_labelled_examples_of_both_kinds(self):
+        examples = [ln for ln in ROUTER_SYSTEM_PROMPT.splitlines() if "->" in ln]
+        assert sum("-> simple" in ln for ln in examples) >= 3
+        assert sum("-> complex" in ln for ln in examples) >= 3
+
+    @pytest.mark.unit
+    def test_router_examples_do_not_leak_the_evaluation_set(self):
+        """Prompt examples must not overlap the live evaluation questions."""
+        import json
+        from pathlib import Path
+
+        dataset = Path(__file__).resolve().parents[2] / "evaluation" / "whitepaper_eval.json"
+        data = json.loads(dataset.read_text())
+        questions = [q["question"] for q in data["in_scope"] + data["out_of_scope"]]
+        prompt = ROUTER_SYSTEM_PROMPT.lower()
+        for question in questions:
+            assert question.lower() not in prompt
+        # Nor the whitepaper's own topics
+        import re
+
+        for term in ["embeddings?", "vectors?", "hnsw", "scann", "bert", "retrieval", "rag"]:
+            assert not re.search(rf"\b{term}\b", prompt), term
+
+    @pytest.mark.unit
+    @patch("app.chains.router.get_llm_with_structured_output")
+    def test_rules_and_examples_reach_the_model(self, mock_get_llm):
+        from langchain_core.runnables import RunnableLambda
+
+        seen = []
+
+        def respond(prompt_value):
+            seen.append(prompt_value.to_messages())
+            return RouteQuery(query_type="simple", reasoning="single fact")
+
+        mock_get_llm.return_value = RunnableLambda(respond)
+
+        result = route_query("What does LSH stand for?")
+
+        system, human = seen[0]
+        assert 'Default to "simple"' in system.content
+        assert "-> complex (comparison)" in system.content
+        assert "What does LSH stand for?" in human.content
+        assert result.query_type == "simple"
 
     @pytest.mark.unit
     @patch("app.chains.router.get_llm_with_structured_output")

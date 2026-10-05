@@ -3,20 +3,26 @@ Evaluate the running Agentic RAG app against evaluation/whitepaper_eval.json.
 
 1. Ask: send each question to the app's /query, one at a time, and save the raw responses.
 2. Retrieve: recreate each answer's final retrieval inside the app container with the app's
-   own code (simple: top-k for final_query; complex: top-k per sub-query, merged and
-   de-duplicated), and map each returned source back to its full chunk text.
+   own code (simple: top-k for final_query; complex: top-k for the question and for each
+   sub-query, merged, de-duplicated and capped), and map each returned source back to its
+   full chunk text.
 3. Judge: score each in-scope answer with one Gemini judge request (temperature 0, its own
    prompt, not the app's grader); out-of-scope questions need no judge call.
 
-Judge requests are budgeted for the free tier's 20 requests per day: at most one request per
-in-scope question per run, no retries, and a hard cap (--max-judge-requests). A question
-whose judge request fails is left unjudged; re-running judges only the missing ones. A 429
-from the judge stops judging for the run.
+Judge requests are budgeted for the free tier's 20 requests per day, with a hard cap on the
+requests actually sent (--max-judge-requests). Out-of-scope questions need no judge request.
+A 503 (judge model overloaded) is retried up to 2 times, 60 s apart; any other failure leaves
+the question unjudged, and re-running judges only the missing ones. A 429 stops judging.
+
+--latency-probe measures single-user latency instead: 5 in-scope questions, each sent after
+60 s of idle time so the app's rate limiter is not queueing, compared with the same
+questions' latency under evaluation load (back-to-back queries) if that run is in --out.
 
 Usage (from the repo root, with the app running via docker compose):
     python3 evaluation/run_eval.py [--base-url http://localhost:8000] [--container agentic-rag]
                                    [--judge-model gemini-3.5-flash] [--max-judge-requests 20]
                                    [--out DIR]
+    python3 evaluation/run_eval.py --latency-probe [--out DIR]
 
 Results go to evaluation/results/<date>-<commit>/ by default. Only the standard library is
 needed. The API key is read from GOOGLE_API_KEY or .env and is never written to any output.
@@ -40,6 +46,16 @@ DATASET = ROOT / "evaluation" / "whitepaper_eval.json"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 JUDGE_MIN_INTERVAL = 8.5  # seconds between judge requests (about 7 per minute)
 DEFAULT_MAX_JUDGE_REQUESTS = 20  # the judge model's free-tier daily quota
+JUDGE_503_RETRIES = 2  # a 503 (model overloaded) is retried this many times...
+JUDGE_503_WAIT = 60  # ...this many seconds apart; every request sent counts toward the cap
+PROBE_IDS = [
+    "q01",
+    "q05",
+    "q10",
+    "q16",
+    "q17",
+]  # latency probe: a mix of single-fact and comparisons
+PROBE_SPACING = 60  # seconds before each probe query, so the app's rate limiter is idle
 
 
 class JudgeUnavailable(RuntimeError):
@@ -140,7 +156,7 @@ manager = get_vectorstore_manager()
 out = {"k": s.retrieval_k, "retrieved": {}}
 for qid, q in req["queries"].items():
     if q["sub_queries"]:
-        docs = manager.retrieve_for_queries(q["sub_queries"], k=s.retrieval_k)
+        docs = manager.retrieve_for_question(q["final_query"], q["sub_queries"], k=s.retrieval_k)
     else:
         docs = manager.vectorstore.similarity_search(q["final_query"], k=s.retrieval_k)
     out["retrieved"][qid] = [{"page": d.metadata.get("page"), "text": d.page_content} for d in docs]
@@ -240,52 +256,66 @@ def judge_prompt(item: dict, answer: str, gen_context: list[str], retrieved: lis
 
 
 class Judge:
-    """Sends judge requests: exactly one per call, never retried, within a hard cap."""
+    """
+    Sends judge requests within a hard cap on requests actually sent.
+
+    A 503 (model overloaded) is retried up to JUDGE_503_RETRIES times, JUDGE_503_WAIT
+    seconds apart; any other failure leaves the question unjudged; a 429 stops judging.
+    """
 
     def __init__(self, model: str, key: str, max_requests: int):
         self.model, self.key, self.max_requests = model, key, max_requests
         self.requests_sent, self.last = 0, 0.0
 
     def __call__(self, prompt: str) -> dict:
-        if self.requests_sent >= self.max_requests:
-            raise JudgeStopped(f"judge request cap reached ({self.max_requests})")
-        body = {
-            "systemInstruction": {"parts": [{"text": JUDGE_SYSTEM}]},
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0,
-                "responseMimeType": "application/json",
-                "responseSchema": JUDGE_SCHEMA,
-            },
-        }
-        time.sleep(max(0.0, self.last + JUDGE_MIN_INTERVAL - time.time()))
-        self.last = time.time()
-        self.requests_sent += 1
-        req = urllib.request.Request(
-            GEMINI_URL.format(model=self.model),
-            data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "x-goog-api-key": self.key},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                data = json.load(resp)
-            return json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
-        except urllib.error.HTTPError as e:
-            text = e.read().decode(errors="replace")
-            if e.code == 429:
-                quota = re.search(r'"quotaId":\s*"([^"]+)"', text)
-                raise JudgeStopped(
-                    f"judge rate-limited (429, {quota.group(1) if quota else 'quota unknown'})"
-                ) from e
-            raise JudgeUnavailable(f"judge HTTP {e.code}") from e
-        except (
-            TimeoutError,
-            urllib.error.URLError,
-            KeyError,
-            IndexError,
-            json.JSONDecodeError,
-        ) as e:
-            raise JudgeUnavailable(f"judge {type(e).__name__}") from e
+        body = json.dumps(
+            {
+                "systemInstruction": {"parts": [{"text": JUDGE_SYSTEM}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0,
+                    "responseMimeType": "application/json",
+                    "responseSchema": JUDGE_SCHEMA,
+                },
+            }
+        ).encode()
+        for attempt in range(JUDGE_503_RETRIES + 1):
+            if self.requests_sent >= self.max_requests:
+                raise JudgeStopped(f"judge request cap reached ({self.max_requests})")
+            time.sleep(max(0.0, self.last + JUDGE_MIN_INTERVAL - time.time()))
+            self.last = time.time()
+            self.requests_sent += 1
+            req = urllib.request.Request(
+                GEMINI_URL.format(model=self.model),
+                data=body,
+                headers={"Content-Type": "application/json", "x-goog-api-key": self.key},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=180) as resp:
+                    data = json.load(resp)
+                return json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
+            except urllib.error.HTTPError as e:
+                text = e.read().decode(errors="replace")
+                if e.code == 429:
+                    quota = re.search(r'"quotaId":\s*"([^"]+)"', text)
+                    raise JudgeStopped(
+                        f"judge rate-limited (429, {quota.group(1) if quota else 'quota unknown'})"
+                    ) from e
+                if e.code == 503 and attempt < JUDGE_503_RETRIES:
+                    print(f"    judge HTTP 503, retrying in {JUDGE_503_WAIT}s", flush=True)
+                    time.sleep(JUDGE_503_WAIT)
+                    continue
+                retried = f" after {attempt} retries" if e.code == 503 else ""
+                raise JudgeUnavailable(f"judge HTTP {e.code}{retried}") from e
+            except (
+                TimeoutError,
+                urllib.error.URLError,
+                KeyError,
+                IndexError,
+                json.JSONDecodeError,
+            ) as e:
+                raise JudgeUnavailable(f"judge {type(e).__name__}") from e
+        raise AssertionError("unreachable")
 
 
 # ---------------------------------------------------------------- Scoring
@@ -519,7 +549,10 @@ def summarize(rows: list[dict], meta: dict) -> str:
         "",
         f"Agreement: {agree}/{len(pairs)}" + (f" ({agree / len(pairs):.0%})" if pairs else ""),
         "",
-        "## Latency and rewrites",
+        "## Latency under evaluation load and rewrites",
+        "",
+        "Queries are sent back to back, so the app's rate limiter queues calls (about 5 s each "
+        "once the burst of 3 is used); see latency_probe.md for single-user latency.",
         "",
         "| | p50 | p95 |",
         "|---|---|---|",
@@ -564,6 +597,72 @@ def summarize(rows: list[dict], meta: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------- Latency probe
+
+
+def latency_probe(base_url: str, items: list[dict], out: Path, spacing: float) -> None:
+    """Single-user latency: each probe question is sent after `spacing` seconds of idle time."""
+    by_id = {i["id"]: i for i in items}
+    rows = []
+    for n, qid in enumerate(PROBE_IDS, 1):
+        print(f"[probe {n}/{len(PROBE_IDS)}] waiting {spacing:.0f}s, then {qid}", flush=True)
+        time.sleep(spacing)
+        r = ask(base_url, by_id[qid]["question"])
+        rows.append(
+            {
+                "id": qid,
+                "question": by_id[qid]["question"],
+                "status": r.get("status"),
+                "path": r.get("query_type"),
+                "rewrites": r.get("iterations"),
+                "revised": r.get("revised"),
+                "latency_ms": r.get("latency_ms"),
+                "client_latency_ms": r.get("client_latency_ms"),
+                "latency_breakdown": r.get("latency_breakdown"),
+            }
+        )
+        print(
+            f"    {r.get('status')} path={r.get('query_type')} {r['client_latency_ms'] / 1000:.1f}s",
+            flush=True,
+        )
+    write_jsonl(out / "latency_probe.jsonl", rows)
+
+    loaded = {r["id"]: r["response"] for r in read_jsonl(out / "raw_responses.jsonl")}
+    seconds = lambda ms: ms / 1000 if ms else None  # noqa: E731
+    single = [seconds(r["latency_ms"]) for r in rows if r.get("latency_ms")]
+    under_load = [seconds(loaded[r["id"]].get("latency_ms")) for r in rows if r["id"] in loaded]
+    under_load = [v for v in under_load if v is not None]
+    lines = [
+        "# Latency probe",
+        "",
+        f"Single-user latency: each question sent after {spacing:.0f} s of idle time, so the "
+        "app's rate limiter has its full burst. Evaluation load: the same question during the "
+        "back-to-back evaluation run in this directory, if there is one.",
+        "",
+        "| Question | Path | Single-user, s | Under evaluation load, s | Breakdown (single-user, s) |",
+        "|---|---|---|---|---|",
+    ]
+    for r in rows:
+        load = loaded.get(r["id"], {}).get("latency_ms")
+        breakdown = ", ".join(
+            f"{k} {v / 1000:.1f}" for k, v in (r.get("latency_breakdown") or {}).items()
+        )
+        lines.append(
+            f"| {r['id']} | {r['path']} | {fmt(seconds(r['latency_ms']), 1)} | "
+            f"{fmt(seconds(load), 1)} | {breakdown} |"
+        )
+    lines += [
+        "",
+        "| | p50, s | max, s |",
+        "|---|---|---|",
+        f"| Single-user (n={len(single)}) | {fmt(pct(single, 0.5), 1)} | {fmt(max(single) if single else None, 1)} |",
+        f"| Under evaluation load (n={len(under_load)}) | {fmt(pct(under_load, 0.5), 1)} | {fmt(max(under_load) if under_load else None, 1)} |",
+        "",
+    ]
+    (out / "latency_probe.md").write_text("\n".join(lines))
+    print(f"Wrote {out / 'latency_probe.jsonl'} and {out / 'latency_probe.md'}")
+
+
 # ---------------------------------------------------------------- Main
 
 
@@ -577,6 +676,12 @@ def main():
     ap.add_argument("--max-judge-requests", type=int, default=DEFAULT_MAX_JUDGE_REQUESTS)
     ap.add_argument("--out", help="results directory (default: results/<date>-<commit>)")
     ap.add_argument("--pause", type=float, default=2.0, help="seconds between app queries")
+    ap.add_argument(
+        "--latency-probe",
+        action="store_true",
+        help=f"measure single-user latency on {len(PROBE_IDS)} questions instead of evaluating",
+    )
+    ap.add_argument("--probe-spacing", type=float, default=PROBE_SPACING)
     args = ap.parse_args()
 
     commit = git_commit()
@@ -586,6 +691,10 @@ def main():
     data = json.loads(DATASET.read_text())
     items = data["in_scope"] + data["out_of_scope"]
     started = dt.datetime.now().isoformat(timespec="seconds")
+
+    if args.latency_probe:
+        latency_probe(args.base_url, data["in_scope"], out, args.probe_spacing)
+        return
 
     raw = run_queries(args.base_url, items, out / "raw_responses.jsonl", args.pause)
     responses = {r["id"]: r["response"] for r in raw}

@@ -4,7 +4,7 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 
 ## Features
 
-- **Query Routing**: A router classifies each query as simple or complex. Complex questions are decomposed into 2–3 sub-queries, each retrieved separately; the results are merged, de-duplicated and graded together
+- **Query Routing**: A router labels a question complex only when it compares things or has clearly separate parts; everything else is simple. Complex questions are decomposed into 2–3 sub-queries, and the question itself plus each sub-query is retrieved separately; the results are merged, de-duplicated, capped at 12 and graded together
 - **Self-Correcting Retrieval**: Grades all retrieved chunks for relevance in one LLM call and rewrites the query when needed (up to 3 attempts)
 - **Self-Correcting Answers**: Checks each answer against the retrieved context. An ungrounded answer is regenerated once with a stricter grounding prompt and checked again; if it is still ungrounded it is returned with `is_grounded=false` and a visible caveat
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
@@ -53,7 +53,7 @@ See the [Quick Start](#quick-start) section below to run it locally with Docker.
 ```
 START → Router (simple or complex)
           ├── simple ──→ Retriever (k=4)
-          └── complex ─→ Decomposer (2–3 sub-queries) → Retriever (k=4 each, merged, de-duplicated)
+          └── complex ─→ Decomposer (2–3 sub-queries) → Retriever (k=4 for the question + each sub-query; merged, de-duplicated, ≤12)
                                         │
                                         ▼
                        Grader (one call for all chunks) → [Decision]
@@ -83,7 +83,7 @@ Generator → Hallucination Check
                                                                         └── still ungrounded ──→ END (is_grounded=false + caveat)
 ```
 
-The router sends simple questions to a single retrieval. Complex questions are decomposed into 2–3 self-contained sub-queries; each is retrieved separately (k=4), and the results are merged and de-duplicated (up to 12 chunks). The grader judges all chunks in one call; on the complex path it also sees the sub-queries, and a chunk that helps answer any one of them counts as relevant. A rewritten query goes back to the start of its path, so complex questions are decomposed again.
+The router labels a question complex only when it compares or contrasts named things, or asks clearly separate questions; single-topic questions are simple, even when they ask how something works. Simple questions get a single retrieval. Complex questions are decomposed into 2–3 self-contained sub-queries; the original question and each sub-query are retrieved separately (k=4), so decomposition can't lose the question's key terms. The results are merged by rank (the question's own hits first), de-duplicated and capped at 12 chunks: up to 16 candidates, keeping ranks 1–3 of every query. The grader judges all chunks in one call; on the complex path it also sees the sub-queries, and a chunk that helps answer any one of them counts as relevant. A rewritten query goes back to the start of its path, so complex questions are decomposed again.
 
 The hallucination check runs on the answer the user actually receives. If the answer isn't grounded in the retrieved context, it is regenerated once with a stricter prompt that includes the checker's list of unsupported claims, and the new answer is checked again. If that is still ungrounded, it is returned with `is_grounded=false` and a `caveat`. When streaming, the first answer arrives as tokens and a regenerated answer arrives as one `revised` event (`{"revised_answer": "..."}`) that replaces it; the `done` event carries `is_grounded`, `revised` and `caveat`, and `/query` returns the same fields. Responses also include `query_type`, `sub_queries` (complex path) and `final_query`, the query used for the last retrieval after any rewrites. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
 
@@ -93,6 +93,8 @@ LLM calls per query:
 |---|---|---|---|---|---|
 | Simple | 4 (route, grade, generate, check) | 6 (+ regenerate, check) | 2 (rewrite, grade) | 12 | 8 |
 | Complex | 5 (route, decompose, grade, generate, check) | 7 | 3 (rewrite, decompose, grade) | 16 | 12 |
+
+Embedding calls (separate model and quota, not rate-limited): 1 per simple retrieval; 3–4 per complex retrieval (the question plus each sub-query), and the same again after each rewrite.
 
 ## Rate Limits and Failures
 
@@ -186,7 +188,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 196 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 203 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|
@@ -289,7 +291,9 @@ docker compose up -d
 python3 evaluation/run_eval.py --judge-model gemini-3.5-flash
 ```
 
-It sends each question to `/query`, recreates each answer's final retrieval with the app's own code, and scores in-scope answers with a separate Gemini judge (temperature 0): correctness against the reference, faithfulness, answer relevance, context recall and precision, refusal accuracy, and agreement with the app's `is_grounded`. It makes at most one judge request per in-scope question and none for out-of-scope ones, never retries, and stops at `--max-judge-requests` (default 20, the judge model's free-tier daily quota). Questions left unjudged are judged on the next run. Results go to `evaluation/results/<date>-<commit>/` (`results.jsonl`, `summary.md`).
+It sends each question to `/query`, recreates each answer's final retrieval with the app's own code, and scores in-scope answers with a separate Gemini judge (temperature 0): correctness against the reference, faithfulness, answer relevance, context recall and precision, refusal accuracy, and agreement with the app's `is_grounded`. Out-of-scope questions need no judge request. A 503 from the judge (model overloaded) is retried up to 2 times, 60 seconds apart; a 429 stops judging at once. Every request actually sent counts toward `--max-judge-requests` (default 20, the judge model's free-tier daily quota), and questions left unjudged are judged on the next run with the same `--out`. Results go to `evaluation/results/<date>-<commit>/` (`results.jsonl`, `summary.md`).
+
+The evaluation sends questions back to back, so its latency includes rate-limiter queueing. To measure single-user latency, run `python3 evaluation/run_eval.py --latency-probe --out <the run's directory>`: it sends 5 questions, each after 60 seconds of idle time, makes no judge requests, and writes `latency_probe.md` comparing single-user latency with the same questions under evaluation load.
 
 ## CI/CD Pipeline
 

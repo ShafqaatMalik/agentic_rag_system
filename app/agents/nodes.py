@@ -124,7 +124,7 @@ def decompose_query_node(state: AgentState) -> dict[str, Any]:
 @time_node("retrieve_multi")
 def retrieve_multi_node(state: AgentState) -> dict[str, Any]:
     """
-    Node: Retrieve top-k documents for each sub-query, merged and de-duplicated.
+    Node: Retrieve top-k for the question and for each sub-query, merged and de-duplicated.
 
     Args:
         state: Current agent state
@@ -133,8 +133,8 @@ def retrieve_multi_node(state: AgentState) -> dict[str, Any]:
         State update with retrieved documents
     """
     settings = get_settings()
-    documents = get_vectorstore_manager().retrieve_for_queries(
-        state["sub_queries"], k=settings.retrieval_k
+    documents = get_vectorstore_manager().retrieve_for_question(
+        state["query"], state["sub_queries"], k=settings.retrieval_k
     )
 
     logger.info(
