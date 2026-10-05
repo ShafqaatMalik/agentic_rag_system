@@ -104,12 +104,16 @@ class TestQueryEndpoint:
             "generation": "I couldn't find relevant information.",
             "iteration_count": 3,
             "is_grounded": None,
+            "query_type": "complex",
+            "sub_queries": ["part one", "part two"],
         }
 
         data = client.post("/query", json={"query": "original"}).json()
 
         assert data["is_grounded"] is None
         assert data["final_query"] == "rewritten query"
+        assert data["query_type"] == "complex"
+        assert data["sub_queries"] == ["part one", "part two"]
 
     @pytest.mark.e2e
     @patch("app.api.main.run_rag_pipeline")
@@ -203,6 +207,7 @@ class TestStreamDoneEvent:
 
         async def fake_stream(query):
             yield {"type": "state_update", "data": {"rewrite": {"query": "rewritten"}}}
+            yield {"type": "state_update", "data": {"decompose": {"sub_queries": ["s1", "s2"]}}}
             yield {"type": "token", "data": "Answer"}
             yield {
                 "type": "state_update",
@@ -226,6 +231,7 @@ class TestStreamDoneEvent:
             "status": "complete",
             "is_grounded": False,
             "final_query": "rewritten",
+            "sub_queries": ["s1", "s2"],
         }
 
 

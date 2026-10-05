@@ -5,8 +5,7 @@ Routes queries as either:
 - "simple": Factual, straightforward questions
 - "complex": Analytical, multi-part, or reasoning-heavy questions
 
-Not called at the moment: both labels take the same retrieval path, so
-route_query_node skips this LLM call. Kept for when they diverge.
+Complex queries are decomposed into sub-queries before retrieval.
 """
 
 from typing import Literal

@@ -35,6 +35,8 @@ class AgentState(TypedDict):
 
     # Routing
     query_type: Literal["simple", "complex"] | None
+    # Complex path: sub-queries the question was decomposed into
+    sub_queries: list[str]
 
     # Metadata
     rewrite_history: list[str]
@@ -64,6 +66,7 @@ def create_initial_state(query: str) -> AgentState:
         is_grounded=None,
         iteration_count=0,
         query_type=None,
+        sub_queries=[],
         rewrite_history=[],
         start_time=time.time(),
         timing={},

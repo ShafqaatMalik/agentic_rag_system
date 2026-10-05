@@ -133,6 +133,32 @@ class VectorStoreManager:
 
         return results
 
+    def retrieve_for_queries(self, queries: list[str], k: int | None = None) -> list[Document]:
+        """
+        Retrieve top-k documents for each query and merge them.
+
+        Results are interleaved by rank (every query's best hit first) and
+        de-duplicated by chunk text, so at most k * len(queries) documents come back.
+
+        Args:
+            queries: Sub-queries to retrieve for
+            k: Documents per query (defaults to RETRIEVAL_K)
+
+        Returns:
+            Merged, de-duplicated documents
+        """
+        k = k or self.settings.retrieval_k
+        per_query = [self.vectorstore.similarity_search(q, k=k) for q in queries]
+
+        merged: list[Document] = []
+        seen: set[str] = set()
+        for rank in range(k):
+            for docs in per_query:
+                if rank < len(docs) and docs[rank].page_content not in seen:
+                    seen.add(docs[rank].page_content)
+                    merged.append(docs[rank])
+        return merged
+
     async def similarity_search(self, query: str, k: int | None = None) -> list[Document]:
         """Perform similarity search."""
         return self.vectorstore.similarity_search(query, k=k or self.settings.retrieval_k)

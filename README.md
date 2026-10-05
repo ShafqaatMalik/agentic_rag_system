@@ -4,7 +4,7 @@ A production-ready Agentic RAG system that autonomously improves retrieval throu
 
 ## Features
 
-- **Query Classification (paused)**: A router chain can classify queries as simple or complex; because both labels take the same retrieval path today, its LLM call is skipped
+- **Query Routing**: A router classifies each query as simple or complex. Complex questions are decomposed into 2–3 sub-queries, each retrieved separately; the results are merged, de-duplicated and graded together
 - **Self-Correcting Retrieval**: Grades all retrieved chunks for relevance in one LLM call and rewrites the query when needed (up to 3 attempts)
 - **Hallucination Check**: Checks each answer against the retrieved context and flags ungrounded answers (`is_grounded` in the API response); it does not regenerate them
 - **Streaming Responses**: Real-time response streaming via Server-Sent Events (SSE)
@@ -51,25 +51,38 @@ See the [Quick Start](#quick-start) section below to run it locally with Docker.
 ## Workflow
 
 ```
-START → Router (skips LLM call) → Retriever → Grader → [Decision]
-                                     (one call for all chunks)
-                                                         │
-          ┌──────────────────────────┬───────────────────┴───────────────────┐
-          ▼                          ▼                                       ▼
-   (docs relevant)       (not relevant, rewrites left)       (not relevant, max rewrites reached)
-          │                          │                                       │
-          ▼                          ▼                                       ▼
-      Generator               Query Rewriter                       No Relevant Documents
-          │                          │                              (fallback message)
-          ▼                          └──→ back to Retriever                  │
-  Hallucination Check                     (up to 3 rewrites)                 ▼
-  (flags, does not regenerate)                                              END
-          │
+START → Router (simple or complex)
+          ├── simple ──→ Retriever (k=4)
+          └── complex ─→ Decomposer (2–3 sub-queries) → Retriever (k=4 each, merged, de-duplicated)
+                                        │
+                                        ▼
+                       Grader (one call for all chunks) → [Decision]
+                                        │
+          ┌─────────────────────────────┼──────────────────────────────┐
+          ▼                             ▼                              ▼
+   (docs relevant)          (not relevant, rewrites left)   (not relevant, max rewrites reached)
+          │                             │                              │
+          ▼                             ▼                              ▼
+      Generator                  Query Rewriter               No Relevant Documents
+          │                             │                       (fallback message)
+          ▼                             └──→ back to the start of its path    │
+  Hallucination Check                        (simple: Retriever,              ▼
+  (flags, does not regenerate)                complex: Decomposer;           END
+          │                                   up to 3 rewrites)
           ▼
          END
 ```
 
-The router node currently skips its LLM classification, because the simple and complex labels would both lead to the retriever; the router chain is kept for when they diverge. The grader judges all retrieved chunks in a single call. A normal query makes three LLM calls: grade, generate and the hallucination check. The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context and reports the verdict as `is_grounded` in the `/query` response and the stream's `done` event; it does not regenerate the answer. Responses also include `final_query`, the query used for the last retrieval after any rewrites. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
+The router sends simple questions to a single retrieval. Complex questions are decomposed into 2–3 self-contained sub-queries; each is retrieved separately (k=4), and the results are merged and de-duplicated (up to 12 chunks). The grader judges all chunks in one call; on the complex path it also sees the sub-queries, and a chunk that helps answer any one of them counts as relevant. A rewritten query goes back to the start of its path, so complex questions are decomposed again.
+
+The hallucination check runs on the answer the user actually receives and flags answers that aren't grounded in the retrieved context. It reports the verdict as `is_grounded` in the `/query` response and the stream's `done` event, and does not regenerate the answer. Responses also include `query_type`, `sub_queries` (complex path) and `final_query`, the query used for the last retrieval after any rewrites. If the grader still finds no relevant documents after `MAX_REWRITE_ITERATIONS` rewrites, the pipeline ends with a "no relevant documents" message instead of generating an answer.
+
+LLM calls per query:
+
+| Path | Answered first time | Each rewrite adds | No relevant documents (3 rewrites) |
+|---|---|---|---|
+| Simple | 4 (route, grade, generate, check) | 2 (rewrite, grade) | 8 |
+| Complex | 5 (route, decompose, grade, generate, check) | 3 (rewrite, decompose, grade) | 12 |
 
 ## Rate Limits and Failures
 
@@ -163,7 +176,7 @@ curl -X POST "http://localhost:8000/query/stream" \
 
 ## Testing
 
-The suite has 159 tests; LLM and embedding calls are mocked, so no API key is needed.
+The suite has 178 tests; LLM and embedding calls are mocked, so no API key is needed.
 
 | Marker | Purpose | Run Command |
 |--------|---------|-------------|
@@ -194,11 +207,12 @@ agentic_rag_system/
 │   │   ├── main.py              # FastAPI app, endpoints, SSE streaming
 │   │   └── schemas.py           # Request/response models
 │   ├── chains/
+│   │   ├── decomposer.py        # Splits complex questions into sub-queries
 │   │   ├── generator.py         # Answer generation
 │   │   ├── grader.py            # Batch document relevance grading
 │   │   ├── hallucination_checker.py  # Groundedness and answer-relevance checks
 │   │   ├── rewriter.py          # Query rewriting
-│   │   └── router.py            # Query classification (simple/complex; currently not called)
+│   │   └── router.py            # Query classification (simple/complex)
 │   ├── retrieval/
 │   │   └── vectorstore.py       # ChromaDB ingestion and retrieval
 │   ├── config.py                # Settings from environment variables

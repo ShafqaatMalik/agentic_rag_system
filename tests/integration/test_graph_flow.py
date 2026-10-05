@@ -143,8 +143,17 @@ class TestConditionalEdges:
 
         result = route_by_query_type(state)
 
-        # Currently both go to retrieve
-        assert result == "retrieve"
+        # Complex queries are decomposed before retrieval
+        assert result == "decompose"
+
+    @pytest.mark.integration
+    def test_after_rewrite_returns_to_the_path_start(self):
+        """Test a rewritten query restarts its own path."""
+        from app.agents.nodes import after_rewrite
+
+        assert after_rewrite({"query_type": "complex"}) == "decompose"
+        assert after_rewrite({"query_type": "simple"}) == "retrieve"
+        assert after_rewrite({"query_type": None}) == "retrieve"
 
 
 class TestGraphStructure:
@@ -159,6 +168,8 @@ class TestGraphStructure:
         # Check nodes are defined
         assert "route" in graph.nodes
         assert "retrieve" in graph.nodes
+        assert "decompose" in graph.nodes
+        assert "retrieve_multi" in graph.nodes
         assert "grade" in graph.nodes
         assert "generate" in graph.nodes
         assert "rewrite" in graph.nodes

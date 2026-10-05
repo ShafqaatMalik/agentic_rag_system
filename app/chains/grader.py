@@ -58,10 +58,22 @@ Guidelines:
 Grade every document independently. For each one, return its number, whether it is relevant, and brief reasoning."""
 
 GRADER_HUMAN_PROMPT = """Query: {query}
-
+{parts}
 {documents}
 
 Grade each of the {count} documents above for relevance to the query."""
+
+
+def format_question_parts(sub_queries: list[str] | None) -> str:
+    """Describe a decomposed question's parts, so single-aspect documents aren't rejected."""
+    if not sub_queries:
+        return ""
+    parts = "\n".join(f"- {q}" for q in sub_queries)
+    return (
+        f"\nThis question has several parts:\n{parts}\n"
+        "A document is relevant if it helps answer the question or any one of these parts, "
+        "even if it covers only one part.\n"
+    )
 
 
 def format_documents_for_grading(documents: list[Document]) -> str:
@@ -89,13 +101,16 @@ def get_grader_chain():
 
 @handle_llm_error
 @llm_retry
-def grade_batch(query: str, documents: list[Document]) -> BatchGrade:
+def grade_batch(
+    query: str, documents: list[Document], sub_queries: list[str] | None = None
+) -> BatchGrade:
     """
     Grade all documents' relevance to the query in one LLM call.
 
     Args:
         query: The user's input query
         documents: The documents to grade
+        sub_queries: Parts of a decomposed question; a document helping any part is relevant
 
     Returns:
         BatchGrade with one indexed grade per document
@@ -104,19 +119,23 @@ def grade_batch(query: str, documents: list[Document]) -> BatchGrade:
     return chain.invoke(
         {
             "query": query,
+            "parts": format_question_parts(sub_queries),
             "documents": format_documents_for_grading(documents),
             "count": len(documents),
         }
     )
 
 
-def grade_documents(query: str, documents: list[Document]) -> GradingResult:
+def grade_documents(
+    query: str, documents: list[Document], sub_queries: list[str] | None = None
+) -> GradingResult:
     """
     Grade all documents and return aggregated results.
 
     Args:
         query: The user's input query
         documents: List of documents to grade
+        sub_queries: Parts of a decomposed question (complex path), if any
 
     Returns:
         GradingResult with relevant docs and statistics
@@ -125,7 +144,7 @@ def grade_documents(query: str, documents: list[Document]) -> GradingResult:
         logger.warning("No documents to grade")
         return GradingResult(relevant_docs=[], irrelevant_count=0, has_relevant_docs=False)
 
-    batch = grade_batch(query, documents)
+    batch = grade_batch(query, documents, sub_queries=sub_queries)
     verdicts = {g.index: g.is_relevant for g in batch.grades}
 
     missing = [i for i in range(1, len(documents) + 1) if i not in verdicts]

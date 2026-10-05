@@ -13,10 +13,12 @@ from typing import Any
 import structlog
 
 from app.agents.state import AgentState
+from app.chains.decomposer import decompose_query
 from app.chains.generator import generate_answer
 from app.chains.grader import grade_documents
 from app.chains.hallucination_checker import check_hallucination
 from app.chains.rewriter import rewrite_query
+from app.chains.router import route_query
 from app.config import get_settings
 from app.retrieval.vectorstore import get_vectorstore_manager
 
@@ -47,7 +49,8 @@ def time_node(node_name: str):
 
             # For nodes that may be called multiple times (retrieve, grade, generate, rewrite)
             # Track them with iteration suffixes
-            if node_name in timing and node_name in ["retrieve", "grade", "generate", "rewrite"]:
+            repeatable = ["retrieve", "retrieve_multi", "decompose", "grade", "generate", "rewrite"]
+            if node_name in timing and node_name in repeatable:
                 iteration = state.get("iteration_count", 0)
                 timing[f"{node_name}_{iteration}"] = duration
             else:
@@ -67,22 +70,63 @@ def time_node(node_name: str):
 @time_node("route")
 def route_query_node(state: AgentState) -> dict[str, Any]:
     """
-    Node: Route the query to determine processing path.
+    Node: Classify the query as simple or complex.
 
-    The router chain (app/chains/router.py) classifies queries as simple or
-    complex, but both labels currently take the same retrieval path, so the
-    LLM call is skipped to save a request per query. Call route_query here
-    again once the labels lead to different paths.
+    Simple queries take a single retrieval; complex ones are decomposed into
+    sub-queries first (see route_by_query_type).
 
     Args:
         state: Current agent state
 
     Returns:
-        Empty state update; query_type stays None
+        State update with query_type
     """
-    logger.info("Node: route_query (classification skipped)", query=state["query"][:50])
+    logger.info("Node: route_query", query=state["query"][:50])
 
-    return {}
+    result = route_query(state["query"])
+
+    return {"query_type": result.query_type}
+
+
+@time_node("decompose")
+def decompose_query_node(state: AgentState) -> dict[str, Any]:
+    """
+    Node: Split a complex query into 2-3 sub-queries.
+
+    Args:
+        state: Current agent state
+
+    Returns:
+        State update with sub_queries
+    """
+    logger.info("Node: decompose_query", query=state["query"][:50])
+
+    return {"sub_queries": decompose_query(state["query"])}
+
+
+@time_node("retrieve_multi")
+def retrieve_multi_node(state: AgentState) -> dict[str, Any]:
+    """
+    Node: Retrieve top-k documents for each sub-query, merged and de-duplicated.
+
+    Args:
+        state: Current agent state
+
+    Returns:
+        State update with retrieved documents
+    """
+    settings = get_settings()
+    documents = get_vectorstore_manager().retrieve_for_queries(
+        state["sub_queries"], k=settings.retrieval_k
+    )
+
+    logger.info(
+        "Documents retrieved for sub-queries",
+        sub_queries=len(state["sub_queries"]),
+        count=len(documents),
+    )
+
+    return {"documents": documents}
 
 
 @time_node("retrieve")
@@ -130,7 +174,10 @@ def grade_documents_node(state: AgentState) -> dict[str, Any]:
         "Node: grade_documents", query=state["query"][:50], doc_count=len(state["documents"])
     )
 
-    result = grade_documents(state["query"], state["documents"])
+    # On the complex path, a document that helps with any sub-query counts as relevant
+    result = grade_documents(
+        state["query"], state["documents"], sub_queries=state.get("sub_queries") or None
+    )
 
     logger.info(
         "Grading complete", relevant=len(result.relevant_docs), irrelevant=result.irrelevant_count
@@ -293,18 +340,32 @@ def route_by_query_type(state: AgentState) -> str:
     """
     Conditional edge: Route based on query type.
 
-    Currently both simple and complex queries go to retrieval,
-    but this could be extended to handle them differently.
+    Simple queries go to a single retrieval; complex ones are decomposed
+    into sub-queries first.
 
     Args:
         state: Current agent state
 
     Returns:
-        Next node name
+        "decompose" for complex queries, "retrieve" otherwise
     """
-    query_type = state.get("query_type", "simple")
+    query_type = state.get("query_type") or "simple"
+    next_node = "decompose" if query_type == "complex" else "retrieve"
 
-    # For now, both types go to retrieval
-    # Could extend to use different retrieval strategies
-    logger.info(f"Routing query type: {query_type} → retrieve")
-    return "retrieve"
+    logger.info(f"Routing query type: {query_type} → {next_node}")
+    return next_node
+
+
+def after_rewrite(state: AgentState) -> str:
+    """
+    Conditional edge: send a rewritten query back to the start of its path.
+
+    Complex queries are decomposed again; simple ones are retrieved directly.
+
+    Args:
+        state: Current agent state
+
+    Returns:
+        "decompose" for complex queries, "retrieve" otherwise
+    """
+    return "decompose" if state.get("query_type") == "complex" else "retrieve"

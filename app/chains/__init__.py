@@ -1,5 +1,6 @@
 """Chains module for LangChain logic components."""
 
+from app.chains.decomposer import SubQueries, decompose_query, get_decomposer_chain
 from app.chains.generator import (
     GenerationResult,
     format_documents,
@@ -32,6 +33,10 @@ __all__ = [
     "RouteQuery",
     "route_query",
     "get_router_chain",
+    # Decomposer
+    "SubQueries",
+    "decompose_query",
+    "get_decomposer_chain",
     # Grader
     "GradeDocument",
     "IndexedGrade",

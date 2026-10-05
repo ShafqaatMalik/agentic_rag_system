@@ -274,6 +274,7 @@ async def query(request: QueryRequest):
             status=status,
             is_grounded=final_state.get("is_grounded"),
             final_query=final_state.get("query"),
+            sub_queries=final_state.get("sub_queries") or [],
             latency_ms=round(total_latency_ms, 2) if total_latency_ms else None,
             latency_breakdown=latency_breakdown,
         )
@@ -317,6 +318,7 @@ async def query_stream(request: QueryRequest):
             documents = []
             is_grounded = None
             final_query = request.query
+            sub_queries = []
             full_answer = ""
 
             # Stream through the pipeline with token-by-token generation
@@ -337,6 +339,8 @@ async def query_stream(request: QueryRequest):
                             is_grounded = node_state["is_grounded"]
                         if isinstance(node_state, dict) and node_state.get("query"):
                             final_query = node_state["query"]
+                        if isinstance(node_state, dict) and node_state.get("sub_queries"):
+                            sub_queries = node_state["sub_queries"]
                     final_state = update_data
                 elif update_type == "done":
                     final_state = update_data
@@ -381,7 +385,12 @@ async def query_stream(request: QueryRequest):
             yield {
                 "event": "done",
                 "data": json.dumps(
-                    {"status": "complete", "is_grounded": is_grounded, "final_query": final_query}
+                    {
+                        "status": "complete",
+                        "is_grounded": is_grounded,
+                        "final_query": final_query,
+                        "sub_queries": sub_queries,
+                    }
                 ),
             }
 

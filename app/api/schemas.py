@@ -81,6 +81,9 @@ class QueryResponse(BaseModel):
     final_query: str | None = Field(
         None, description="Query used for the final retrieval (after any rewrites)"
     )
+    sub_queries: list[str] = Field(
+        default_factory=list, description="Complex path: sub-queries retrieved for"
+    )
     latency_ms: float | None = Field(None, description="Total latency in milliseconds")
     latency_breakdown: dict | None = Field(None, description="Latency breakdown by component")
 

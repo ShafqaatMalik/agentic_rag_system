@@ -12,11 +12,14 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from app.agents.nodes import (
+    after_rewrite,
     check_hallucination_node,
+    decompose_query_node,
     generate_answer_node,
     grade_documents_node,
     no_relevant_docs_node,
     retrieve_documents_node,
+    retrieve_multi_node,
     rewrite_query_node,
     route_by_query_type,
     route_query_node,
@@ -33,10 +36,11 @@ def create_rag_graph() -> StateGraph:
 
     Workflow:
     1. Route query (classify as simple/complex)
-    2. Retrieve documents
-    3. Grade documents for relevance
+    2. Simple: retrieve documents. Complex: decompose into 2-3 sub-queries,
+       retrieve for each, merge and de-duplicate
+    3. Grade documents for relevance (one batched call)
     4. If relevant → Generate answer → Check hallucination → END
-    5. If not relevant → Rewrite query → Back to retrieval (max 3 times)
+    5. If not relevant → Rewrite query → back to the start of its path (max 3 times)
     6. If max iterations → Return fallback message → END
 
     Returns:
@@ -48,6 +52,8 @@ def create_rag_graph() -> StateGraph:
     # --- Add Nodes ---
     workflow.add_node("route", route_query_node)
     workflow.add_node("retrieve", retrieve_documents_node)
+    workflow.add_node("decompose", decompose_query_node)
+    workflow.add_node("retrieve_multi", retrieve_multi_node)
     workflow.add_node("grade", grade_documents_node)
     workflow.add_node("generate", generate_answer_node)
     workflow.add_node("rewrite", rewrite_query_node)
@@ -59,11 +65,15 @@ def create_rag_graph() -> StateGraph:
     # Entry point: Start with routing
     workflow.set_entry_point("route")
 
-    # Route → Retrieve (could be extended for different query types)
-    workflow.add_conditional_edges("route", route_by_query_type, {"retrieve": "retrieve"})
+    # Route → simple: Retrieve | complex: Decompose → Retrieve for each sub-query
+    workflow.add_conditional_edges(
+        "route", route_by_query_type, {"retrieve": "retrieve", "decompose": "decompose"}
+    )
+    workflow.add_edge("decompose", "retrieve_multi")
 
     # Retrieve → Grade
     workflow.add_edge("retrieve", "grade")
+    workflow.add_edge("retrieve_multi", "grade")
 
     # Grade → Conditional: Generate or Rewrite
     workflow.add_conditional_edges(
@@ -78,8 +88,10 @@ def create_rag_graph() -> StateGraph:
     # Check Hallucination → END
     workflow.add_edge("check_hallucination", END)
 
-    # Rewrite → Retrieve (loop back)
-    workflow.add_edge("rewrite", "retrieve")
+    # Rewrite → back to the start of the query's path (loop)
+    workflow.add_conditional_edges(
+        "rewrite", after_rewrite, {"retrieve": "retrieve", "decompose": "decompose"}
+    )
 
     # No Relevant Docs → END
     workflow.add_edge("no_relevant_docs", END)

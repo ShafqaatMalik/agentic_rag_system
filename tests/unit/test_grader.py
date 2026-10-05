@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableLambda
 
 from app.chains.grader import (
     GRADER_SYSTEM_PROMPT,
@@ -14,6 +15,7 @@ from app.chains.grader import (
     GradingResult,
     IndexedGrade,
     format_documents_for_grading,
+    format_question_parts,
     get_grader_chain,
     grade_batch,
     grade_documents,
@@ -163,7 +165,7 @@ class TestGradeDocuments:
 
         result = grade_documents("Test query", docs)
 
-        mock_grade_batch.assert_called_once_with("Test query", docs)
+        mock_grade_batch.assert_called_once_with("Test query", docs, sub_queries=None)
         assert result.has_relevant_docs is True
         assert result.relevant_docs == [docs[0], docs[2]]
         assert result.irrelevant_count == 1
@@ -223,3 +225,59 @@ class TestGradeDocuments:
         assert result.has_relevant_docs is False
         assert len(result.relevant_docs) == 0
         assert result.irrelevant_count == 0
+
+
+class TestGradingWithSubQueries:
+    """Complex path: a chunk that helps with any part of the question is relevant."""
+
+    @staticmethod
+    def fake_model(verdicts, seen):
+        """A stand-in for the LLM that records the prompt and returns fixed verdicts."""
+
+        def respond(prompt_value):
+            seen.append(prompt_value.to_messages()[-1].content)
+            return make_batch(*verdicts)
+
+        return RunnableLambda(respond)
+
+    @pytest.mark.unit
+    def test_question_parts_text(self):
+        assert format_question_parts(None) == ""
+        assert format_question_parts([]) == ""
+        text = format_question_parts(["How fast is HNSW?", "How fast is ScaNN?"])
+        assert "- How fast is HNSW?" in text
+        assert "- How fast is ScaNN?" in text
+        assert "any one of these parts" in text
+
+    @pytest.mark.unit
+    @patch("app.chains.grader.get_llm_with_structured_output")
+    def test_sub_queries_reach_the_grader_and_single_aspect_chunks_are_kept(self, mock_get_llm):
+        seen = []
+        # Chunk 1 covers only the HNSW part, chunk 2 only ScaNN, chunk 3 neither
+        mock_get_llm.return_value = self.fake_model(["yes", "yes", "no"], seen)
+        docs = [
+            Document(page_content="HNSW is a hierarchical proximity graph."),
+            Document(page_content="ScaNN uses anisotropic quantization."),
+            Document(page_content="The whitepaper was written in February 2025."),
+        ]
+        sub_queries = ["How does HNSW search?", "How does ScaNN search?"]
+
+        result = grade_documents("Compare HNSW and ScaNN", docs, sub_queries=sub_queries)
+
+        prompt = seen[0]
+        assert "- How does HNSW search?" in prompt
+        assert "- How does ScaNN search?" in prompt
+        assert "any one of these parts" in prompt
+        assert result.relevant_docs == docs[:2]
+        assert result.irrelevant_count == 1
+
+    @pytest.mark.unit
+    @patch("app.chains.grader.get_llm_with_structured_output")
+    def test_simple_path_prompt_has_no_parts(self, mock_get_llm):
+        seen = []
+        mock_get_llm.return_value = self.fake_model(["yes"], seen)
+
+        grade_documents("What is HNSW?", [Document(page_content="HNSW is a graph.")])
+
+        assert "several parts" not in seen[0]
+        assert "Query: What is HNSW?" in seen[0]
