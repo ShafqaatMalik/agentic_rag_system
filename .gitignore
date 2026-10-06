@@ -68,3 +68,10 @@ Thumbs.db
 # Local backups and notes
 chroma_db_old_backup/
 how to start for demo.png
+
+# Evaluation runs: only the final results are committed
+evaluation/results/*
+!evaluation/results/2026-10-05-9b43853/
+evaluation/results/2026-10-05-9b43853/*
+!evaluation/results/2026-10-05-9b43853/summary.md
+!evaluation/results/2026-10-05-9b43853/results.jsonl

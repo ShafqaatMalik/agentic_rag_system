@@ -10,7 +10,7 @@ from typing import Literal
 import structlog
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.chains.generator import format_documents
 from app.errors import handle_llm_error, llm_retry
@@ -31,6 +31,14 @@ class HallucinationCheck(BaseModel):
     issues: str = Field(
         description="Description of any hallucination issues found, or 'None' if grounded"
     )
+
+    @field_validator("is_grounded", mode="before")
+    @classmethod
+    def booleans_to_yes_no(cls, value):
+        """The model sometimes returns true/false instead of "yes"/"no"; accept both."""
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        return value
 
 
 class AnswerRelevanceCheck(BaseModel):

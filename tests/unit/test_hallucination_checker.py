@@ -47,6 +47,19 @@ class TestHallucinationCheck:
         with pytest.raises(ValueError):
             HallucinationCheck(is_grounded="yes", confidence="very high", issues="None")
 
+    @pytest.mark.unit
+    def test_hallucination_check_boolean_verdicts(self):
+        """The model sometimes answers true/false instead of "yes"/"no"."""
+        assert (
+            HallucinationCheck(is_grounded=True, confidence="high", issues="None").is_grounded
+            == "yes"
+        )
+        assert (
+            HallucinationCheck(is_grounded=False, confidence="low", issues="x").is_grounded == "no"
+        )
+        with pytest.raises(ValueError):
+            HallucinationCheck(is_grounded=1, confidence="high", issues="None")
+
 
 class TestAnswerRelevanceCheck:
     """Tests for AnswerRelevanceCheck schema."""

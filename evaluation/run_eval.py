@@ -10,9 +10,11 @@ Evaluate the running Agentic RAG app against evaluation/whitepaper_eval.json.
    prompt, not the app's grader); out-of-scope questions need no judge call.
 
 Judge requests are budgeted for the free tier's 20 requests per day, with a hard cap on the
-requests actually sent (--max-judge-requests). Out-of-scope questions need no judge request.
-A 503 (judge model overloaded) is retried up to 2 times, 60 s apart; any other failure leaves
-the question unjudged, and re-running judges only the missing ones. A 429 stops judging.
+requests actually sent (--max-judge-requests), sent --judge-pause seconds apart (default 15).
+Out-of-scope questions need no judge request. A 503 (judge model overloaded) is retried up to
+2 times, 60 s apart. A per-minute 429 is retried up to 2 times after the server's suggested
+delay (at most 90 s); a daily-quota 429 stops judging. Any other failure leaves the question
+unjudged, and re-running judges only the missing ones.
 
 --latency-probe measures single-user latency instead: 5 in-scope questions, each sent after
 60 s of idle time so the app's rate limiter is not queueing, compared with the same
@@ -45,10 +47,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATASET = ROOT / "evaluation" / "whitepaper_eval.json"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-JUDGE_MIN_INTERVAL = 8.5  # seconds between judge requests (about 7 per minute)
+JUDGE_PAUSE = 15.0  # default seconds between judge requests (--judge-pause)
 DEFAULT_MAX_JUDGE_REQUESTS = 20  # the judge model's free-tier daily quota
 JUDGE_503_RETRIES = 2  # a 503 (model overloaded) is retried this many times...
 JUDGE_503_WAIT = 60  # ...this many seconds apart; every request sent counts toward the cap
+JUDGE_429_RETRIES = 2  # a per-minute 429 is retried this many times per question...
+JUDGE_429_MAX_WAIT = 90  # ...after the server's suggested delay, capped at this many seconds
+JUDGE_429_DEFAULT_WAIT = 60  # used when the 429 suggests no delay
 PROBE_IDS = [
     "q01",
     "q05",
@@ -260,12 +265,15 @@ class Judge:
     """
     Sends judge requests within a hard cap on requests actually sent.
 
-    A 503 (model overloaded) is retried up to JUDGE_503_RETRIES times, JUDGE_503_WAIT
-    seconds apart; any other failure leaves the question unjudged; a 429 stops judging.
+    Requests are sent at least `pause` seconds apart. A 503 (model overloaded) is retried
+    up to JUDGE_503_RETRIES times, JUDGE_503_WAIT seconds apart. A per-minute 429 is retried
+    up to JUDGE_429_RETRIES times after the server's suggested delay (capped at
+    JUDGE_429_MAX_WAIT); a daily-quota 429 stops judging. Any other failure leaves the
+    question unjudged.
     """
 
-    def __init__(self, model: str, key: str, max_requests: int):
-        self.model, self.key, self.max_requests = model, key, max_requests
+    def __init__(self, model: str, key: str, max_requests: int, pause: float = JUDGE_PAUSE):
+        self.model, self.key, self.max_requests, self.pause = model, key, max_requests, pause
         self.requests_sent, self.last = 0, 0.0
 
     def __call__(self, prompt: str) -> dict:
@@ -280,10 +288,11 @@ class Judge:
                 },
             }
         ).encode()
-        for attempt in range(JUDGE_503_RETRIES + 1):
+        retries_503 = retries_429 = 0
+        while True:
             if self.requests_sent >= self.max_requests:
                 raise JudgeStopped(f"judge request cap reached ({self.max_requests})")
-            time.sleep(max(0.0, self.last + JUDGE_MIN_INTERVAL - time.time()))
+            time.sleep(max(0.0, self.last + self.pause - time.time()))
             self.last = time.time()
             self.requests_sent += 1
             req = urllib.request.Request(
@@ -299,14 +308,20 @@ class Judge:
                 text = e.read().decode(errors="replace")
                 if e.code == 429:
                     quota = re.search(r'"quotaId":\s*"([^"]+)"', text)
-                    raise JudgeStopped(
-                        f"judge rate-limited (429, {quota.group(1) if quota else 'quota unknown'})"
-                    ) from e
-                if e.code == 503 and attempt < JUDGE_503_RETRIES:
+                    quota_id = quota.group(1) if quota else "quota unknown"
+                    if "PerDay" in quota_id or retries_429 >= JUDGE_429_RETRIES:
+                        raise JudgeStopped(f"judge rate-limited (429, {quota_id})") from e
+                    retries_429 += 1
+                    wait = min(retry_delay(e, text), JUDGE_429_MAX_WAIT)
+                    print(f"    judge 429 ({quota_id}), retrying in {wait:.0f}s", flush=True)
+                    time.sleep(wait)
+                    continue
+                if e.code == 503 and retries_503 < JUDGE_503_RETRIES:
+                    retries_503 += 1
                     print(f"    judge HTTP 503, retrying in {JUDGE_503_WAIT}s", flush=True)
                     time.sleep(JUDGE_503_WAIT)
                     continue
-                retried = f" after {attempt} retries" if e.code == 503 else ""
+                retried = f" after {retries_503} retries" if e.code == 503 else ""
                 raise JudgeUnavailable(f"judge HTTP {e.code}{retried}") from e
             except (
                 TimeoutError,
@@ -316,7 +331,17 @@ class Judge:
                 json.JSONDecodeError,
             ) as e:
                 raise JudgeUnavailable(f"judge {type(e).__name__}") from e
-        raise AssertionError("unreachable")
+
+
+def retry_delay(e: urllib.error.HTTPError, text: str) -> float:
+    """The delay a 429 suggests: its RetryInfo retryDelay, else Retry-After, else a default."""
+    m = re.search(r'"retryDelay":\s*"([\d.]+)s"', text)
+    if m:
+        return float(m.group(1))
+    try:
+        return float(e.headers.get("Retry-After", ""))
+    except ValueError:
+        return JUDGE_429_DEFAULT_WAIT
 
 
 # ---------------------------------------------------------------- Scoring
@@ -675,6 +700,9 @@ def main():
     ap.add_argument("--container", default="agentic-rag")
     ap.add_argument("--judge-model", default="gemini-3.5-flash")
     ap.add_argument("--max-judge-requests", type=int, default=DEFAULT_MAX_JUDGE_REQUESTS)
+    ap.add_argument(
+        "--judge-pause", type=float, default=JUDGE_PAUSE, help="seconds between judge requests"
+    )
     ap.add_argument("--out", help="results directory (default: results/<date>-<commit>)")
     ap.add_argument("--pause", type=float, default=2.0, help="seconds between app queries")
     ap.add_argument(
@@ -719,7 +747,11 @@ def main():
         for d in docs:
             d["id"] = chunk_ids.get(norm(d["text"]))
 
-    judge = None if args.skip_judge else Judge(args.judge_model, api_key(), args.max_judge_requests)
+    judge = (
+        None
+        if args.skip_judge
+        else Judge(args.judge_model, api_key(), args.max_judge_requests, args.judge_pause)
+    )
     # Judged rows are saved as they complete; a re-run judges only the questions still missing
     judged_path = out / "judged.jsonl"
     judged = {
