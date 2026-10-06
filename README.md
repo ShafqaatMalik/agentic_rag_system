@@ -47,7 +47,7 @@ A labelled dataset of 25 questions (20 answerable, 5 not) is run against the liv
 | Stage | Step | LLM calls |
 |---|---|---|
 | Routing | Router labels the question | 1 |
-| ① Retrieval | *Simple:* top 4 chunks. *Complex:* decompose, then top 4 for the original question and each sub-query | 0 · 1 |
+| ① Retrieval | *Simple:* top 4 chunks. *Complex:* decompose, then top 4 for the original question and each sub-query | 0 (simple) · 1 (complex) |
 | ② Self-correcting retrieval | Grade all chunks at once; if none relevant, rewrite and retry (max 3) | 1 per attempt (+1 per rewrite) |
 | ③ Generation & control | Generate, check grounding; regenerate once and re-check if needed | 2 (+2 if regenerated) |
 
@@ -59,7 +59,7 @@ A typical question costs **4 LLM calls** on the simple path and **5** on the com
 An early version defaulted to "relevant" and "grounded" whenever a check failed. Under free-tier rate limits, that meant users received apologies dressed up as cited, verified answers. Now any failed check surfaces as an explicit error, so a wrong answer can never look like a verified one.
 
 **Batch the work to stay within limits.**
-Grading chunks one at a time took 4 calls per question and made rate limiting frequent. One structured call now grades all chunks; together with generating each answer once, this cut a typical query from 8 calls to 3–5 and made latency predictable.
+Grading chunks one at a time took 4 calls per question and made rate limiting frequent. One structured call now grades all chunks; together with generating each answer once, this cut a typical query from 8 calls to 4–5 and made latency predictable.
 
 **Never let decomposition replace the question.**
 Evaluation showed sub-queries can drop the key term (for example, losing "literal IDs" from a question about embedding weaknesses), so the right passage was never retrieved. Retrieval now always includes the original question alongside its sub-queries.
